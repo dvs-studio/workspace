@@ -18,14 +18,20 @@ permissions:
 
 jobs:
   clone:
-    name: Clone ArmorPaint Source
+    name: Clone and Inspect ArmorPaint
     runs-on: windows-latest
+    timeout-minutes: 90
 
     steps:
-      - name: Select source revision
-        id: source
+      # ------------------------------------------------------------
+      # STAGE 1: CONFIGURATION
+      # ------------------------------------------------------------
+      - name: Initialize progress reporting
+        id: init
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           $version = "${{ inputs.version }}"
 
           switch ($version) {
@@ -49,94 +55,586 @@ jobs:
             }
           }
 
+          Write-Host "=========================================="
+          Write-Host "ARMORPAINT SOURCE PREPARATION"
+          Write-Host "=========================================="
+          Write-Host "Selected version: $version"
+          Write-Host "Requested Git reference: $ref"
+          Write-Host "Destination directory: $folder"
+          Write-Host "Runner: Windows"
+          Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
           "SOURCE_REF=$ref" >> $env:GITHUB_OUTPUT
           "SOURCE_FOLDER=$folder" >> $env:GITHUB_OUTPUT
           "SOURCE_VERSION=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Clone ArmorPaint repository
+      # ------------------------------------------------------------
+      # STAGE 2: VERIFY HISTORICAL REFERENCE
+      # ------------------------------------------------------------
+      - name: Verify selected Git reference
+        id: reference
         shell: pwsh
+        env:
+          SOURCE_REF: ${{ steps.init.outputs.SOURCE_REF }}
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
         run: |
-          $ref = "${{ steps.source.outputs.SOURCE_REF }}"
-          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+          $ErrorActionPreference = "Stop"
 
+          $repository = "https://github.com/armory3d/armorpaint.git"
+          $ref = $env:SOURCE_REF
+          $version = $env:SOURCE_VERSION
+
+          Write-Host "=========================================="
+          Write-Host "VERIFYING SOURCE REFERENCE"
+          Write-Host "=========================================="
+          Write-Host "Repository: $repository"
+          Write-Host "Version: $version"
+          Write-Host "Requested reference: $ref"
+
+          $remoteLines = @(
+            git ls-remote --heads --tags $repository
+          )
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to query the ArmorPaint Git repository."
+          }
+
+          $matched = @(
+            $remoteLines | Where-Object {
+              $parts = $_ -split "\s+", 2
+
+              if ($parts.Count -ne 2) {
+                return $false
+              }
+
+              $remoteRef = $parts[1]
+
+              ($remoteRef -eq "refs/heads/$ref") -or
+              ($remoteRef -eq "refs/tags/$ref") -or
+              ($remoteRef -eq "refs/tags/$ref^{}")
+            }
+          )
+
+          if ($matched.Count -eq 0) {
+            Write-Host ""
+            Write-Host "The requested reference was not found as an exact branch or tag."
+            Write-Host "Checking whether the reference is a commit..."
+
+            $commitCheck = git ls-remote $repository $ref
+
+            if ($LASTEXITCODE -ne 0 -or !$commitCheck) {
+              Write-Host ""
+              Write-Host "Available remote references containing the requested version:"
+              $remoteLines |
+                Where-Object {
+                  $_ -match "23\.09|0\.9|09|26\.09|2025"
+                } |
+                Select-Object -First 100 |
+                ForEach-Object { Write-Host $_ }
+
+              throw "Reference '$ref' was not confirmed as an available branch or tag. See the reference diagnostics above."
+            }
+          }
+
+          Write-Host "Reference verification completed."
+          Write-Host "The clone stage will perform the final checkout validation."
+
+      # ------------------------------------------------------------
+      # STAGE 3: CLONE THE SELECTED REVISION
+      # ------------------------------------------------------------
+      - name: Clone ArmorPaint repository
+        id: clone
+        shell: pwsh
+        env:
+          SOURCE_REF: ${{ steps.init.outputs.SOURCE_REF }}
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $repository = "https://github.com/armory3d/armorpaint.git"
+          $ref = $env:SOURCE_REF
+          $folder = $env:SOURCE_FOLDER
+
+          Write-Host "=========================================="
+          Write-Host "STAGE 1: CLONING SOURCE"
+          Write-Host "=========================================="
+          Write-Host "Repository: $repository"
+          Write-Host "Requested reference: $ref"
+          Write-Host "Destination: $folder"
+
+          if (Test-Path $folder) {
+            Remove-Item $folder -Recurse -Force
+          }
+
+          # Try cloning the exact reference as a branch or tag.
           git clone `
             --branch $ref `
             --single-branch `
-            https://github.com/armory3d/armorpaint.git `
+            $repository `
             $folder
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to clone ArmorPaint revision: $ref"
+            Write-Host ""
+            Write-Host "Normal branch/tag clone failed."
+            Write-Host "Trying a direct checkout using the requested Git reference."
+
+            if (Test-Path $folder) {
+              Remove-Item $folder -Recurse -Force
+            }
+
+            git clone --no-checkout $repository $folder
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to clone the ArmorPaint repository."
+            }
+
+            git -C $folder checkout --detach $ref
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host ""
+              Write-Host "Direct checkout failed."
+              Write-Host "Available historical references:"
+
+              git -C $folder branch -a
+              git -C $folder tag --list "*23*"
+              git -C $folder tag --list "*09*"
+
+              throw "Could not check out '$ref'. The requested historical revision may not exist in this repository."
+            }
           }
 
-          git -C $folder rev-parse HEAD
+          if (!(Test-Path "$folder/.git")) {
+            throw "Clone validation failed: Git metadata is missing."
+          }
 
-      - name: Initialize available submodules
+          $commit = git -C $folder rev-parse HEAD
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to identify the checked-out commit."
+          }
+
+          $commitDate = git -C $folder show -s --format=%cI HEAD
+          $commitSubject = git -C $folder show -s --format=%s HEAD
+
+          Write-Host ""
+          Write-Host "Clone completed."
+          Write-Host "Requested reference: $ref"
+          Write-Host "Actual commit: $commit"
+          Write-Host "Commit date: $commitDate"
+          Write-Host "Commit subject: $commitSubject"
+
+          "ACTUAL_COMMIT=$commit" >> $env:GITHUB_OUTPUT
+          "COMMIT_DATE=$commitDate" >> $env:GITHUB_OUTPUT
+          "COMMIT_SUBJECT=$commitSubject" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # STAGE 4: INSPECT SOURCE STRUCTURE
+      # ------------------------------------------------------------
+      - name: Inspect source directory structure
+        id: inspect
         shell: pwsh
+        env:
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
         run: |
-          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+          $ErrorActionPreference = "Stop"
+
+          $folder = $env:SOURCE_FOLDER
+          $version = $env:SOURCE_VERSION
+
+          Write-Host "=========================================="
+          Write-Host "STAGE 2: SOURCE STRUCTURE INSPECTION"
+          Write-Host "=========================================="
+          Write-Host "Selected version: $version"
+          Write-Host "Source directory: $folder"
+
+          if (!(Test-Path $folder)) {
+            throw "The cloned source directory does not exist."
+          }
+
+          Write-Host ""
+          Write-Host "Repository root:"
+          Get-ChildItem $folder -Force |
+            Select-Object Name, Mode, Length |
+            Format-Table -AutoSize
+
+          Write-Host ""
+          Write-Host "Checking expected directories..."
+
+          $expected = @(
+            "paint",
+            "base",
+            "armorcore",
+            "armorcore/Kinc",
+            "paint/Kromx",
+            "Kromx",
+            "Kinc",
+            "Sources",
+            "build"
+          )
+
+          foreach ($item in $expected) {
+            $path = Join-Path $folder $item
+
+            if (Test-Path $path) {
+              Write-Host "[FOUND] $item"
+            }
+            else {
+              Write-Host "[NOT FOUND] $item"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "Searching for build-related files..."
+
+          $buildFiles = @(
+            Get-ChildItem $folder `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -match '^(make|make\.bat|make\.js|build\.bat|CMakeLists\.txt|Cargo\.toml|package\.json|.*\.sln|.*\.vcxproj|build\.hxml|khafile\.js)$'
+            }
+          )
+
+          if ($buildFiles.Count -gt 0) {
+            $buildFiles |
+              Select-Object -First 300 |
+              ForEach-Object {
+                Write-Host $_.FullName
+              }
+          }
+          else {
+            Write-Warning "No recognized build files were found."
+          }
+
+          "BUILD_FILE_COUNT=$($buildFiles.Count)" >> $env:GITHUB_OUTPUT
+
+          # Check whether the expected paint directory exists.
+          if (Test-Path (Join-Path $folder "paint")) {
+            "PAINT_DIRECTORY_FOUND=true" >> $env:GITHUB_OUTPUT
+          }
+          else {
+            "PAINT_DIRECTORY_FOUND=false" >> $env:GITHUB_OUTPUT
+          }
+
+          Write-Host ""
+          Write-Host "Source structure inspection completed."
+
+      # ------------------------------------------------------------
+      # STAGE 5: INSPECT AND INITIALIZE SUBMODULES
+      # ------------------------------------------------------------
+      - name: Inspect and initialize submodules
+        id: submodules
+        shell: pwsh
+        env:
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $folder = $env:SOURCE_FOLDER
+          $submoduleStatus = "not-configured"
+
+          Write-Host "=========================================="
+          Write-Host "STAGE 3: SUBMODULE INSPECTION"
+          Write-Host "=========================================="
 
           if (Test-Path "$folder/.gitmodules") {
-            Write-Host "Submodules found:"
+            Write-Host "Found .gitmodules."
+            Write-Host ""
             Get-Content "$folder/.gitmodules"
+
+            Write-Host ""
+            Write-Host "Initializing submodules individually where possible..."
+
+            git -C $folder submodule sync --recursive
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Submodule URL synchronization reported an error."
+            }
 
             git -C $folder submodule update --init --recursive
 
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "Some submodules could not be initialized."
+            if ($LASTEXITCODE -eq 0) {
+              $submoduleStatus = "initialized"
+              Write-Host "Submodule initialization completed."
+            }
+            else {
+              $submoduleStatus = "partial-or-failed"
+              Write-Warning "One or more submodules could not be initialized."
+              Write-Warning "The workflow will record this and continue with the available source."
+            }
 
-              Write-Host "Continuing with source inspection."
+            Write-Host ""
+            Write-Host "Submodule status:"
+            git -C $folder submodule status
+
+            Write-Host ""
+            Write-Host "Checking for uninitialized submodule directories..."
+
+            $statusLines = @(
+              git -C $folder submodule status --recursive 2>$null
+            )
+
+            foreach ($line in $statusLines) {
+              if ($line.StartsWith("-")) {
+                Write-Warning "Uninitialized submodule: $line"
+              }
+              elseif ($line.StartsWith("+")) {
+                Write-Warning "Submodule commit differs from the recorded revision: $line"
+              }
+              elseif ($line.StartsWith("U")) {
+                Write-Warning "Submodule has a merge conflict: $line"
+              }
             }
           }
           else {
-            Write-Host "No .gitmodules file was found."
+            Write-Host "No .gitmodules file exists in this revision."
           }
 
-      - name: Inspect repository structure
+          "SUBMODULE_STATUS=$submoduleStatus" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # STAGE 6: CREATE DIAGNOSTIC REPORT
+      # ------------------------------------------------------------
+      - name: Create source diagnostic report
+        id: diagnostics
         shell: pwsh
+        env:
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
+          SOURCE_REF: ${{ steps.init.outputs.SOURCE_REF }}
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+          ACTUAL_COMMIT: ${{ steps.clone.outputs.ACTUAL_COMMIT }}
+          COMMIT_DATE: ${{ steps.clone.outputs.COMMIT_DATE }}
+          COMMIT_SUBJECT: ${{ steps.clone.outputs.COMMIT_SUBJECT }}
+          BUILD_FILE_COUNT: ${{ steps.inspect.outputs.BUILD_FILE_COUNT }}
+          PAINT_DIRECTORY_FOUND: ${{ steps.inspect.outputs.PAINT_DIRECTORY_FOUND }}
+          SUBMODULE_STATUS: ${{ steps.submodules.outputs.SUBMODULE_STATUS }}
         run: |
-          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+          $ErrorActionPreference = "Stop"
 
-          Write-Host "Selected source: $folder"
-          Write-Host "Repository root:"
-          Get-ChildItem $folder -Force |
-            Select-Object Name, Mode
+          $folder = $env:SOURCE_FOLDER
+          $report = Join-Path $folder "ARMORPAINT_CLONE_DIAGNOSTICS.txt"
 
-          Write-Host "Build-related files:"
+          $rootEntries = @(
+            Get-ChildItem $folder -Force |
+              Select-Object -ExpandProperty Name
+          )
 
-          Get-ChildItem $folder `
-            -Recurse `
-            -File `
-            -ErrorAction SilentlyContinue |
+          $reportLines = @(
+            "ArmorPaint Source Clone Diagnostics"
+            "==================================="
+            ""
+            "Selected version: $env:SOURCE_VERSION"
+            "Requested Git reference: $env:SOURCE_REF"
+            "Actual commit: $env:ACTUAL_COMMIT"
+            "Commit date: $env:COMMIT_DATE"
+            "Commit subject: $env:COMMIT_SUBJECT"
+            "Build-related file count: $env:BUILD_FILE_COUNT"
+            "Paint directory found: $env:PAINT_DIRECTORY_FOUND"
+            "Submodule status: $env:SUBMODULE_STATUS"
+            "Generated at UTC: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+            ""
+            "Top-level entries:"
+          )
+
+          $reportLines += $rootEntries
+          $reportLines += ""
+          $reportLines += "Build-related files:"
+
+          $buildFiles = @(
+            Get-ChildItem $folder `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
             Where-Object {
-              $_.Name -match '^(make|make\.bat|make\.js|build\.bat|CMakeLists\.txt|.*\.sln)$'
+              $_.Name -match '^(make|make\.bat|make\.js|build\.bat|CMakeLists\.txt|Cargo\.toml|package\.json|.*\.sln|.*\.vcxproj|build\.hxml|khafile\.js)$'
             } |
-            Select-Object -First 100 -ExpandProperty FullName
+            Select-Object -First 300 -ExpandProperty FullName
+          )
 
-          Write-Host "Submodule status:"
-          git -C $folder submodule status
+          if ($buildFiles.Count -gt 0) {
+            $reportLines += $buildFiles
+          }
+          else {
+            $reportLines += "No recognized build files found."
+          }
 
-      - name: Create source archive
+          $reportLines += ""
+          $reportLines += "Important:"
+          $reportLines += "A successful clone does not guarantee a successful build."
+          $reportLines += "Historical releases may use a different source layout."
+          $reportLines += "Check submodule status before compiling."
+
+          $reportLines | Set-Content -Path $report -Encoding utf8
+
+          Write-Host "Diagnostic report created:"
+          Write-Host $report
+          Get-Content $report
+
+      # ------------------------------------------------------------
+      # STAGE 7: VALIDATE SOURCE BEFORE PACKAGING
+      # ------------------------------------------------------------
+      - name: Validate cloned source
+        id: validate
         shell: pwsh
+        env:
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+          ACTUAL_COMMIT: ${{ steps.clone.outputs.ACTUAL_COMMIT }}
+          BUILD_FILE_COUNT: ${{ steps.inspect.outputs.BUILD_FILE_COUNT }}
+          PAINT_DIRECTORY_FOUND: ${{ steps.inspect.outputs.PAINT_DIRECTORY_FOUND }}
         run: |
-          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
-          $version = "${{ steps.source.outputs.SOURCE_VERSION }}"
+          $ErrorActionPreference = "Stop"
 
+          $folder = $env:SOURCE_FOLDER
+          $version = $env:SOURCE_VERSION
+
+          Write-Host "=========================================="
+          Write-Host "STAGE 4: SOURCE VALIDATION"
+          Write-Host "=========================================="
+
+          if (!(Test-Path "$folder/.git")) {
+            throw "Git metadata is missing."
+          }
+
+          if (!(Test-Path "$folder/ARMORPAINT_CLONE_DIAGNOSTICS.txt")) {
+            throw "The diagnostic report was not generated."
+          }
+
+          $commit = git -C $folder rev-parse HEAD
+
+          if ($LASTEXITCODE -ne 0 -or !$commit) {
+            throw "Could not verify the checked-out source commit."
+          }
+
+          $sourceFiles = @(
+            Get-ChildItem $folder `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.FullName -notmatch '[\\/]\.git[\\/]'
+            }
+          )
+
+          if ($sourceFiles.Count -eq 0) {
+            throw "No source files were found."
+          }
+
+          Write-Host "Selected version: $version"
+          Write-Host "Verified commit: $commit"
+          Write-Host "Files found: $($sourceFiles.Count)"
+          Write-Host "Build-related file count: $env:BUILD_FILE_COUNT"
+          Write-Host "Paint directory found: $env:PAINT_DIRECTORY_FOUND"
+
+          if ($version -eq "0.9-September" -and
+              $env:PAINT_DIRECTORY_FOUND -ne "true") {
+            Write-Warning "The September 0.9 revision does not have a paint directory at the repository root."
+            Write-Warning "The source will be archived for inspection, but its historical layout must be identified before compilation."
+          }
+
+          Write-Host ""
+          Write-Host "Source validation completed."
+
+      # ------------------------------------------------------------
+      # STAGE 8: PACKAGE SOURCE
+      # ------------------------------------------------------------
+      - name: Create source archive
+        id: package
+        shell: pwsh
+        env:
+          SOURCE_VERSION: ${{ steps.init.outputs.SOURCE_VERSION }}
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $folder = $env:SOURCE_FOLDER
+          $version = $env:SOURCE_VERSION
           $archive = "armorpaint-source-$version.zip"
 
-          Compress-Archive `
-            -Path "$folder/*" `
-            -DestinationPath $archive `
-            -CompressionLevel Optimal
+          Write-Host "=========================================="
+          Write-Host "STAGE 5: PACKAGING SOURCE"
+          Write-Host "=========================================="
+
+          if (!(Test-Path $folder)) {
+            throw "Cannot package missing source directory: $folder"
+          }
+
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+
+          Write-Host "Source directory: $folder"
+          Write-Host "Archive name: $archive"
+
+          # Archive the directory contents, including hidden files that
+          # PowerShell's wildcard expansion could otherwise omit.
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $resolvedFolder = (Resolve-Path $folder).Path
+          $zipPath = Join-Path (Get-Location).Path $archive
+
+          $zip = [System.IO.Compression.ZipFile]::Open(
+            $zipPath,
+            [System.IO.Compression.ZipArchiveMode]::Create
+          )
+
+          try {
+            $files = Get-ChildItem $resolvedFolder `
+              -Recurse `
+              -File `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+            foreach ($file in $files) {
+              $relative = $file.FullName.Substring(
+                $resolvedFolder.Length
+              ).TrimStart('\', '/')
+
+              # Exclude the repository's internal Git database.
+              # The extracted source will be committed to the destination repo.
+              if ($relative -match '(^|[\\/])\.git([\\/]|$)') {
+                continue
+              }
+
+              $entryName = $relative.Replace('\', '/')
+
+              [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip,
+                $file.FullName,
+                $entryName,
+                [System.IO.Compression.CompressionLevel]::Optimal
+              ) | Out-Null
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
 
           if (!(Test-Path $archive)) {
             throw "Source archive was not created."
           }
 
-          Write-Host "Source archive created:"
-          Get-Item $archive |
-            Select-Object Name, Length
+          $archiveInfo = Get-Item $archive
 
+          if ($archiveInfo.Length -le 0) {
+            throw "The source archive is empty."
+          }
+
+          Write-Host ""
+          Write-Host "Archive created successfully."
+          Write-Host "Filename: $($archiveInfo.Name)"
+          Write-Host ("Size: {0:N2} MB" -f ($archiveInfo.Length / 1MB))
+
+          "ARCHIVE_NAME=$archive" >> $env:GITHUB_OUTPUT
+          "ARCHIVE_SIZE=$($archiveInfo.Length)" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # STAGE 9: UPLOAD SOURCE ARTIFACT
+      # ------------------------------------------------------------
       - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
@@ -144,3 +642,50 @@ jobs:
           path: armorpaint-source-${{ inputs.version }}.zip
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
+
+      # ------------------------------------------------------------
+      # STAGE 10: UPLOAD DIAGNOSTIC REPORT SEPARATELY
+      # ------------------------------------------------------------
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-diagnostics-${{ inputs.version }}
+          path: |
+            ${{ steps.init.outputs.SOURCE_FOLDER }}/ARMORPAINT_CLONE_DIAGNOSTICS.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ------------------------------------------------------------
+      # FINAL SUMMARY
+      # ------------------------------------------------------------
+      - name: Final progress summary
+        if: always()
+        shell: pwsh
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ steps.init.outputs.SOURCE_REF }}
+          SOURCE_FOLDER: ${{ steps.init.outputs.SOURCE_FOLDER }}
+          ACTUAL_COMMIT: ${{ steps.clone.outputs.ACTUAL_COMMIT }}
+          BUILD_FILE_COUNT: ${{ steps.inspect.outputs.BUILD_FILE_COUNT }}
+          SUBMODULE_STATUS: ${{ steps.submodules.outputs.SUBMODULE_STATUS }}
+          ARCHIVE_NAME: ${{ steps.package.outputs.ARCHIVE_NAME }}
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "ARMORPAINT CLONE SUMMARY"
+          Write-Host "=========================================="
+
+          Write-Host "Selected version: $env:SOURCE_VERSION"
+          Write-Host "Requested reference: $env:SOURCE_REF"
+          Write-Host "Actual commit: $env:ACTUAL_COMMIT"
+          Write-Host "Build-related files: $env:BUILD_FILE_COUNT"
+          Write-Host "Submodule status: $env:SUBMODULE_STATUS"
+          Write-Host "Source archive: $env:ARCHIVE_NAME"
+          Write-Host "Finished: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+          Write-Host ""
+          Write-Host "Important:"
+          Write-Host "The workflow verifies and packages source files."
+          Write-Host "It does not yet prove that this version can compile."
