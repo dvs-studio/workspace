@@ -1,13 +1,12 @@
-name: ArmorPaint - Compile Windows Builds
+name: Compile ArmorPaint for Windows
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Choose which ArmorPaint version to compile"
-        type: choice
+        description: "Select ArmorPaint version to compile"
         required: true
-        default: "1.0"
+        type: choice
         options:
           - "1.0"
           - "0.9"
@@ -17,218 +16,190 @@ permissions:
 
 jobs:
   compile:
-    name: Compile ArmorPaint ${{ inputs.version }} for Windows
+    name: Compile ArmorPaint ${{ inputs.version }} - Windows x64
     runs-on: windows-latest
     timeout-minutes: 120
 
-    steps:
-      # ---------------------------------------------------------
-      # 1. CHECK OUT THE REPOSITORY
-      # ---------------------------------------------------------
-      - name: Checkout source repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+    env:
+      VERSION: ${{ inputs.version }}
 
-      # ---------------------------------------------------------
-      # 2. SELECT THE SOURCE DIRECTORY
-      # ---------------------------------------------------------
-      - name: Configure build
-        id: config
+    steps:
+      - name: Checkout workspace repository
+        uses: actions/checkout@v4
+
+      - name: Select source directory
         shell: pwsh
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "=========================================="
-          Write-Host "ARMORPAINT WINDOWS BUILD"
-          Write-Host "=========================================="
-
-          switch ($env:VERSION) {
-            "1.0" {
-              $source = "sources/armorpaint-260"
-              $buildSystem = "modern"
-              $artifact = "armorpaint-1.0-windows-x64"
-            }
-
-            "0.9" {
-              $source = "sources/armorpaint-09"
-              $buildSystem = "legacy"
-              $artifact = "armorpaint-0.9-windows-x64"
-            }
-
-            default {
-              throw "Unsupported ArmorPaint version: $env:VERSION"
-            }
+          if ("${{ inputs.version }}" -eq "1.0") {
+            $source = Join-Path $env:GITHUB_WORKSPACE "sources/armorpaint-260"
+          }
+          else {
+            $source = Join-Path $env:GITHUB_WORKSPACE "sources/armorpaint-09"
           }
 
-          if (!(Test-Path $source)) {
-            throw "Source directory not found: $source. Run the source migration workflow first."
+          if (!(Test-Path -LiteralPath $source -PathType Container)) {
+            throw "Source directory does not exist: $source"
           }
+
+          "SOURCE=$source" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
           Write-Host "Selected version: $env:VERSION"
           Write-Host "Source directory: $source"
-          Write-Host "Build system: $buildSystem"
-          Write-Host "Artifact name: $artifact"
 
-          "SOURCE_DIR=$source" >> $env:GITHUB_OUTPUT
-          "BUILD_SYSTEM=$buildSystem" >> $env:GITHUB_OUTPUT
-          "ARTIFACT_NAME=$artifact" >> $env:GITHUB_OUTPUT
+          Write-Host ""
+          Write-Host "Top-level source contents:"
 
-      # ---------------------------------------------------------
-      # 3. VERIFY VISUAL STUDIO BUILD TOOLS
-      # ---------------------------------------------------------
-      - name: Verify Windows build tools
+          Get-ChildItem -LiteralPath $source |
+            Select-Object Mode, Name |
+            Format-Table -AutoSize
+
+          Write-Host ""
+          Write-Host "Build-related files:"
+
+          Get-ChildItem -LiteralPath $source `
+            -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -in @(
+                "README.md",
+                "readme.md",
+                "khafile.js",
+                "make",
+                "make.bat",
+                "make.cmd",
+                "make.ps1",
+                "make.js",
+                "ArmorPaint.sln",
+                "ArmorPaint.slnx"
+              )
+            } |
+            Select-Object -First 200 -ExpandProperty FullName
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Verify Visual Studio build tools
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "=========================================="
-          Write-Host "CHECKING BUILD TOOLS"
-          Write-Host "=========================================="
+          $vswhere = Join-Path `
+            ${env:ProgramFiles(x86)} `
+            "Microsoft Visual Studio/Installer/vswhere.exe"
 
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-
-          if (!(Test-Path $vswhere)) {
-            throw "Visual Studio Installer and vswhere.exe were not found on the runner."
+          if (!(Test-Path -LiteralPath $vswhere)) {
+            throw "Visual Studio Installer / vswhere was not found."
           }
 
           $vsPath = & $vswhere `
             -latest `
             -products "*" `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -property installationPath
 
           if (!$vsPath) {
-            throw "Visual Studio C++ x64 build tools are not installed."
+            throw "No Visual Studio installation was detected."
           }
 
-          Write-Host "Visual Studio installation: $vsPath"
+          Write-Host "Visual Studio: $vsPath"
 
-          $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+          $msbuild = Join-Path $vsPath `
+            "MSBuild/Current/Bin/MSBuild.exe"
 
-          if (!(Test-Path $msbuild)) {
-            throw "MSBuild.exe was not found at $msbuild"
+          if (!(Test-Path -LiteralPath $msbuild)) {
+            throw "MSBuild.exe was not found: $msbuild"
           }
 
-          Write-Host "MSBuild found: $msbuild"
+          "MSBUILD=$msbuild" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-          $clang = Get-ChildItem `
-            (Join-Path $vsPath "VC\Tools\Llvm\bin\clang.exe") `
-            -ErrorAction SilentlyContinue
+          Write-Host ""
+          Write-Host "MSBuild version:"
+          & $msbuild -version -nologo
 
-          if ($clang) {
-            Write-Host "Clang found: $($clang.FullName)"
-          }
-          else {
-            Write-Warning "Clang was not found at the standard Visual Studio LLVM path."
-            Write-Warning "The build may require the Visual Studio Clang component."
-          }
+          Write-Host ""
+          Write-Host "Node version:"
+          node --version
 
-          "MSBUILD_PATH=$msbuild" >> $env:GITHUB_ENV
+          Write-Host ""
+          Write-Host "npm version:"
+          npm --version
 
-      # ---------------------------------------------------------
-      # 4. INSPECT SOURCE AND DEPENDENCIES
-      # ---------------------------------------------------------
-      - name: Inspect source and dependencies
+      - name: Inspect source README files
         shell: pwsh
-        env:
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
-          BUILD_SYSTEM: ${{ steps.config.outputs.BUILD_SYSTEM }}
         run: |
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Continue"
 
-          $source = $env:SOURCE_DIR
-
-          Write-Host "=========================================="
-          Write-Host "SOURCE INSPECTION"
-          Write-Host "=========================================="
-
-          Write-Host "Source: $source"
-
-          Write-Host ""
-          Write-Host "Top-level files:"
-          Get-ChildItem $source -Force |
-            Select-Object Name, Mode |
-            Format-Table -AutoSize
-
-          Write-Host ""
-          Write-Host "Searching for build files..."
-
-          $buildFiles = @(
-            Get-ChildItem $source `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -in @(
-                "make",
-                "make.bat",
-                "make.exe",
-                "ArmorPaint.sln",
-                "CMakeLists.txt",
-                "khafile.js"
-              )
-            }
+          $readmes = @(
+            (Join-Path $env:SOURCE "README.md"),
+            (Join-Path $env:SOURCE "readme.md"),
+            (Join-Path $env:SOURCE "armorpaint/README.md"),
+            (Join-Path $env:SOURCE "armorpaint/readme.md"),
+            (Join-Path $env:SOURCE "paint/README.md"),
+            (Join-Path $env:SOURCE "paint/readme.md")
           )
 
-          $buildFiles |
-            Select-Object -First 200 -ExpandProperty FullName
+          foreach ($file in ($readmes | Select-Object -Unique)) {
+            if (Test-Path -LiteralPath $file -PathType Leaf) {
+              Write-Host ""
+              Write-Host "=========================================="
+              Write-Host "README: $file"
+              Write-Host "=========================================="
 
-          if ($env:BUILD_SYSTEM -eq "modern") {
-            if (!(Test-Path "$source/paint")) {
-              throw "Modern source layout is invalid: the paint directory is missing."
-            }
-
-            if (!(Test-Path "$source/base/make")) {
-              throw "Modern build script is missing: base/make"
-            }
-
-            if (!(Test-Path "$source/base/tools/bin/amake.exe") -and
-                !(Test-Path "$source/base/tools/bin/amake")) {
-              Write-Warning "The prebuilt amake tool was not found."
-              Write-Warning "The build stage will determine whether the source can generate its project."
+              Get-Content -LiteralPath $file |
+                Select-Object -First 250
             }
           }
 
-          if ($env:BUILD_SYSTEM -eq "legacy") {
-            if (!(Test-Path "$source/armorcore/Kinc/make")) {
-              throw "Legacy Kinc build script is missing. The selected source may not be the historical 0.9 layout."
-            }
-
-            if (!(Test-Path "$source/paint")) {
-              Write-Warning "No paint directory exists at the source root."
-              Write-Warning "The historical build layout must be checked before compilation."
-            }
-
-            if (!(Test-Path "$source/.gitmodules")) {
-              Write-Warning "No .gitmodules file was found in the migrated source."
-              Write-Warning "Check whether all required historical dependencies were included."
-            }
-          }
-
-          Write-Host ""
-          Write-Host "Source inspection completed."
-
-      # ---------------------------------------------------------
-      # 5. GENERATE THE MODERN WINDOWS PROJECT
-      # ---------------------------------------------------------
-      - name: Generate ArmorPaint 1.0 Visual Studio project
+      - name: Generate ArmorPaint 1.0 project
         if: inputs.version == '1.0'
         shell: pwsh
-        env:
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          $source = (Resolve-Path $env:SOURCE_DIR).Path
-          $paint = Join-Path $source "paint"
-          $make = Join-Path $source "base\make"
+          Write-Host "=========================================="
+          Write-Host "GENERATING ARMORPAINT 1.0 PROJECT"
+          Write-Host "=========================================="
 
-          Write-Host "=========================================="
-          Write-Host "GENERATING MODERN WINDOWS PROJECT"
-          Write-Host "=========================================="
+          $source = $env:SOURCE
+          $paint = Join-Path $source "paint"
+          $base = Join-Path $source "base"
+          $make = Join-Path $base "make"
+          $logDir = Join-Path $env:GITHUB_WORKSPACE "build-logs"
+
+          New-Item -ItemType Directory -Path $logDir -Force |
+            Out-Null
+
+          if (!(Test-Path -LiteralPath $paint -PathType Container)) {
+            throw "Modern paint directory is missing: $paint"
+          }
+
+          if (!(Test-Path -LiteralPath $base -PathType Container)) {
+            throw "Modern base directory is missing: $base"
+          }
+
+          if (!(Test-Path -LiteralPath $make -PathType Leaf)) {
+            Write-Host "Files found in base:"
+
+            Get-ChildItem -LiteralPath $base |
+              Select-Object Name, Mode |
+              Format-Table -AutoSize
+
+            throw "Build entry point is missing: $make"
+          }
+
+          $log = Join-Path $logDir "armorpaint-1.0-generation.log"
+
+          $solutionSln = Join-Path $paint "build/ArmorPaint.sln"
+          $solutionSlnx = Join-Path $paint "build/ArmorPaint.slnx"
 
           Push-Location $paint
 
@@ -236,298 +207,256 @@ jobs:
             Write-Host "Working directory: $paint"
             Write-Host "Build command: $make"
 
-            # The official README documents running base/make
-            # from the paint directory on Windows.
-            & $make
+            $global:LASTEXITCODE = 0
 
-            if ($LASTEXITCODE -ne 0) {
-              throw "ArmorPaint project generation failed with exit code $LASTEXITCODE."
+            & $make *> $log
+
+            $commandSucceeded = $?
+            $nativeExitCode = $LASTEXITCODE
+
+            Write-Host ""
+            Write-Host "========== GENERATION LOG =========="
+
+            if (Test-Path -LiteralPath $log) {
+              Get-Content -LiteralPath $log
             }
+
+            Write-Host "===================================="
+
+            if (Test-Path -LiteralPath $solutionSln -PathType Leaf) {
+              $solution = $solutionSln
+            }
+            elseif (Test-Path -LiteralPath $solutionSlnx -PathType Leaf) {
+              $solution = $solutionSlnx
+            }
+            else {
+              Write-Host ""
+              Write-Host "Neither ArmorPaint.sln nor ArmorPaint.slnx was generated."
+
+              Get-ChildItem -LiteralPath $source `
+                -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $_.Extension -in @(".sln", ".slnx")
+                } |
+                Select-Object -ExpandProperty FullName
+
+              if ($null -ne $nativeExitCode -and $nativeExitCode -ne 0) {
+                throw "Project generation returned exit code $nativeExitCode. See $log"
+              }
+
+              if (!$commandSucceeded) {
+                throw "Project generation failed. See $log"
+              }
+
+              throw "No generated solution was found. See $log"
+            }
+
+            Write-Host ""
+            Write-Host "Selected solution: $solution"
+
+            "SOLUTION=$solution" |
+              Out-File $env:GITHUB_ENV -Append -Encoding utf8
           }
           finally {
             Pop-Location
           }
 
-          $solution = Join-Path $paint "build\ArmorPaint.sln"
-
-          if (!(Test-Path $solution)) {
-            Write-Host "Searching for generated Visual Studio solutions..."
-
-            Get-ChildItem $source `
-              -Recurse `
-              -Filter "*.sln" `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty FullName
-
-            throw "ArmorPaint.sln was not generated. Check the build-tool output above."
-          }
-
-          Write-Host "Generated solution: $solution"
-
-          "SOLUTION_PATH=$solution" >> $env:GITHUB_ENV
-
-      # ---------------------------------------------------------
-      # 6. BUILD THE MODERN WINDOWS PROJECT
-      # ---------------------------------------------------------
-      - name: Compile ArmorPaint 1.0
-        if: inputs.version == '1.0'
-        shell: pwsh
-        env:
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $source = (Resolve-Path $env:SOURCE_DIR).Path
-          $solution = $env:SOLUTION_PATH
-
-          Write-Host "=========================================="
-          Write-Host "COMPILING ARMORPAINT 1.0"
-          Write-Host "=========================================="
-
-          & $env:MSBUILD_PATH $solution `
-            /m `
-            /t:Build `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /verbosity:minimal
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "ArmorPaint 1.0 compilation failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "MSBuild completed successfully."
-
-      # ---------------------------------------------------------
-      # 7. BUILD THE HISTORICAL 0.9 PROJECT
-      # ---------------------------------------------------------
-      - name: Generate historical ArmorPaint 0.9 project
-        if: inputs.version == '0.9'
-        shell: pwsh
-        env:
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $source = (Resolve-Path $env:SOURCE_DIR).Path
-          $make = Join-Path $source "armorcore\Kinc\make"
-
-          Write-Host "=========================================="
-          Write-Host "GENERATING HISTORICAL WINDOWS PROJECT"
-          Write-Host "=========================================="
-
-          if (!(Test-Path $make)) {
-            throw "Historical Kinc make script was not found: $make"
-          }
-
-          # The legacy build instructions use the Direct3D 11
-          # graphics backend and generate a Visual Studio solution.
-          & $make --from $source\armorcore -g direct3d11
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "The historical Kinc project generation failed with exit code $LASTEXITCODE."
-          }
-
-          $solution = Join-Path $source "build\ArmorPaint.sln"
-
-          if (!(Test-Path $solution)) {
-            Write-Host "Searching for generated Visual Studio solutions..."
-
-            Get-ChildItem $source `
-              -Recurse `
-              -Filter "*.sln" `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty FullName
-
-            throw "The historical build did not generate the expected ArmorPaint.sln."
-          }
-
-          Write-Host "Generated solution: $solution"
-
-          "SOLUTION_PATH=$solution" >> $env:GITHUB_ENV
-
-      # ---------------------------------------------------------
-      # 8. COMPILE HISTORICAL 0.9
-      # ---------------------------------------------------------
-      - name: Compile ArmorPaint 0.9
+      - name: Generate ArmorPaint 0.9 project
         if: inputs.version == '0.9'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "COMPILING ARMORPAINT 0.9"
+          Write-Host "DETECTING ARMORPAINT 0.9 BUILD SYSTEM"
           Write-Host "=========================================="
 
-          & $env:MSBUILD_PATH $env:SOLUTION_PATH `
-            /m `
-            /t:Build `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /verbosity:minimal
+          $source = $env:SOURCE
+          $logDir = Join-Path $env:GITHUB_WORKSPACE "build-logs"
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "ArmorPaint 0.9 compilation failed with exit code $LASTEXITCODE."
+          New-Item -ItemType Directory -Path $logDir -Force |
+            Out-Null
+
+          $appDir = Join-Path $source "armorpaint"
+          $appKhaFile = Join-Path $appDir "khafile.js"
+
+          $legacyMake = Join-Path $source "armorcore/Kinc/make"
+          $legacyMakeBat = Join-Path $source "armorcore/Kinc/make.bat"
+
+          $khaMakeJs = Join-Path $source "Kha/make.js"
+          $khaMake = Join-Path $source "Kha/make"
+
+          $log = Join-Path $logDir "armorpaint-0.9-generation.log"
+
+          if (!(Test-Path -LiteralPath $appKhaFile -PathType Leaf)) {
+            Write-Host "Available Kha project files:"
+
+            Get-ChildItem -LiteralPath $source `
+              -Recurse -Filter "khafile.js" `
+              -File -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
+
+            throw "Expected project file is missing: $appKhaFile"
           }
 
-          Write-Host "Historical MSBuild compilation completed."
+          Write-Host "Application directory: $appDir"
+          Write-Host "Application project: $appKhaFile"
 
-      # ---------------------------------------------------------
-      # 9. LOCATE COMPILED EXECUTABLE
-      # ---------------------------------------------------------
-      - name: Locate compiled executable and runtime files
-        id: output
+          $commandSucceeded = $false
+          $nativeExitCode = $null
+
+          if (Test-Path -LiteralPath $legacyMakeBat -PathType Leaf) {
+            Push-Location $source
+
+            try {
+              & $legacyMakeBat `
+                --from (Join-Path $source "armorcore") `
+                -g direct3d11 *> $log
+
+              $commandSucceeded = $?
+              $nativeExitCode = $LASTEXITCODE
+            }
+            finally {
+              Pop-Location
+            }
+          }
+          elseif (Test-Path -LiteralPath $legacyMake -PathType Leaf) {
+            Push-Location $source
+
+            try {
+              & $legacyMake `
+                --from (Join-Path $source "armorcore") `
+                -g direct3d11 *> $log
+
+              $commandSucceeded = $?
+              $nativeExitCode = $LASTEXITCODE
+            }
+            finally {
+              Pop-Location
+            }
+          }
+          elseif (Test-Path -LiteralPath $khaMakeJs -PathType Leaf) {
+            Push-Location $appDir
+
+            try {
+              node $khaMakeJs krom -g direct3d11 *> $log
+
+              $commandSucceeded = $?
+              $nativeExitCode = $LASTEXITCODE
+            }
+            finally {
+              Pop-Location
+            }
+          }
+          elseif (Test-Path -LiteralPath $khaMake -PathType Leaf) {
+            Push-Location $appDir
+
+            try {
+              & $khaMake krom -g direct3d11 *> $log
+
+              $commandSucceeded = $?
+              $nativeExitCode = $LASTEXITCODE
+            }
+            finally {
+              Pop-Location
+            }
+          }
+          else {
+            Write-Host "No recognized legacy Kinc or Kha build entry point was found."
+
+            Get-ChildItem -LiteralPath $source `
+              -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -match "^(make|make\.bat|make\.cmd|make\.ps1|make\.js|package\.json|khafile\.js)$"
+              } |
+              Select-Object -First 200 -ExpandProperty FullName
+
+            throw "Cannot safely choose the 0.9 build command. Required build tools may be absent."
+          }
+
+          Write-Host ""
+          Write-Host "========== GENERATION LOG =========="
+
+          if (Test-Path -LiteralPath $log) {
+            Get-Content -LiteralPath $log
+          }
+
+          Write-Host "===================================="
+
+          $solutionSln = Join-Path $source "build/ArmorPaint.sln"
+          $solutionSlnx = Join-Path $source "build/ArmorPaint.slnx"
+
+          if (Test-Path -LiteralPath $solutionSln -PathType Leaf) {
+            $solution = $solutionSln
+          }
+          elseif (Test-Path -LiteralPath $solutionSlnx -PathType Leaf) {
+            $solution = $solutionSlnx
+          }
+          else {
+            $solutions = @(
+              Get-ChildItem -LiteralPath $source `
+                -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".sln", ".slnx")
+              }
+            )
+
+            if ($solutions.Count -gt 0) {
+              $solutions |
+                Select-Object -ExpandProperty FullName
+            }
+
+            if ($null -ne $nativeExitCode -and $nativeExitCode -ne 0) {
+              throw "ArmorPaint 0.9 generation failed with exit code $nativeExitCode. See $log"
+            }
+
+            if (!$commandSucceeded) {
+              throw "ArmorPaint 0.9 generation failed. See $log"
+            }
+
+            throw "No .sln or .slnx solution was generated. See $log"
+          }
+
+          Write-Host "Selected solution: $solution"
+
+          "SOLUTION=$solution" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Select generated Visual Studio solution
         shell: pwsh
-        env:
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
-          VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          $source = (Resolve-Path $env:SOURCE_DIR).Path
-
-          Write-Host "=========================================="
-          Write-Host "LOCATING BUILD OUTPUT"
-          Write-Host "=========================================="
-
-          $candidates = @(
-            Get-ChildItem $source `
-              -Recurse `
-              -Filter "ArmorPaint.exe" `
-              -File `
-              -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.FullName -notmatch '[\\/](Debug|obj)[\\/]'
-            }
-          )
-
-          if ($candidates.Count -eq 0) {
-            Write-Host "No ArmorPaint.exe was found."
-            Write-Host "Recent executable files:"
-            Get-ChildItem $source `
-              -Recurse `
-              -Filter "*.exe" `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object -First 100 -ExpandProperty FullName
-
-            throw "Compilation finished without a discoverable ArmorPaint.exe."
+          # Prefer the solution already selected during generation.
+          if ($env:SOLUTION -and
+              (Test-Path -LiteralPath $env:SOLUTION -PathType Leaf)) {
+            Write-Host "Using generated solution: $env:SOLUTION"
+            exit 0
           }
 
-          $exe = $candidates |
-            Sort-Object {
-              if ($_.FullName -match '[\\/]Release[\\/]') { 0 } else { 1 }
-            } |
-            Select-Object -First 1
-
-          Write-Host "Executable found: $($exe.FullName)"
-
-          $output = Join-Path $env:GITHUB_WORKSPACE "build-output\ArmorPaint-$env:VERSION"
-
-          New-Item -ItemType Directory -Force -Path $output | Out-Null
-
-          # Copy the executable.
-          Copy-Item $exe.FullName (Join-Path $output "ArmorPaint.exe") -Force
-
-          # Copy generated runtime/data directories when present.
-          $possibleDataDirectories = @(
-            (Join-Path $source "paint\build\krom"),
-            (Join-Path $source "paint\build\out"),
-            (Join-Path $source "build\krom"),
-            (Join-Path $source "build\out"),
-            (Join-Path $source "armorcore\Deployment")
-          )
-
-          foreach ($directory in $possibleDataDirectories) {
-            if (Test-Path $directory) {
-              $name = Split-Path $directory -Leaf
-              $destination = Join-Path $output $name
-
-              Write-Host "Copying runtime directory: $directory"
-
-              Copy-Item $directory $destination -Recurse -Force
-            }
+          if ("${{ inputs.version }}" -eq "1.0") {
+            $buildDirectory = Join-Path $env:SOURCE "paint/build"
+          }
+          else {
+            $buildDirectory = Join-Path $env:SOURCE "build"
           }
 
-          Write-Host ""
-          Write-Host "Prepared output:"
-          Get-ChildItem $output -Recurse |
-            Select-Object FullName, Length |
-            Format-Table -AutoSize
+          $preferredSln = Join-Path $buildDirectory "ArmorPaint.sln"
+          $preferredSlnx = Join-Path $buildDirectory "ArmorPaint.slnx"
 
-          "OUTPUT_DIR=$output" >> $env:GITHUB_OUTPUT
-
-      # ---------------------------------------------------------
-      # 10. PACKAGE WINDOWS BUILD
-      # ---------------------------------------------------------
-      - name: Package Windows build
-        shell: pwsh
-        env:
-          VERSION: ${{ inputs.version }}
-          OUTPUT_DIR: ${{ steps.output.outputs.OUTPUT_DIR }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host "PACKAGING WINDOWS BUILD"
-          Write-Host "=========================================="
-
-          $archive = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "ArmorPaint-$env:VERSION-Windows-x64.zip"
-
-          if (Test-Path $archive) {
-            Remove-Item $archive -Force
+          if (Test-Path -LiteralPath $preferredSln -PathType Leaf) {
+            $solution = $preferredSln
           }
-
-          Compress-Archive `
-            -Path "$env:OUTPUT_DIR\*" `
-            -DestinationPath $archive `
-            -CompressionLevel Optimal
-
-          if (!(Test-Path $archive)) {
-            throw "The Windows build archive was not created."
+          elseif (Test-Path -LiteralPath $preferredSlnx -PathType Leaf) {
+            $solution = $preferredSlnx
           }
+          else {
+            $solutions = @(
+              Get-ChildItem -LiteralPath $env:SOURCE `
+                -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".sln", ".slnx")
+              }
+            )
 
-          $item = Get-Item $archive
-
-          Write-Host "Archive: $($item.FullName)"
-          Write-Host ("Size: {0:N2} MB" -f ($item.Length / 1MB))
-
-      # ---------------------------------------------------------
-      # 11. UPLOAD BUILD ARTIFACT
-      # ---------------------------------------------------------
-      - name: Upload compiled Windows build
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.config.outputs.ARTIFACT_NAME }}
-          path: ArmorPaint-${{ inputs.version }}-Windows-x64.zip
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
-
-      # ---------------------------------------------------------
-      # 12. FINAL SUMMARY
-      # ---------------------------------------------------------
-      - name: Build summary
-        if: always()
-        shell: pwsh
-        env:
-          VERSION: ${{ inputs.version }}
-          SOURCE_DIR: ${{ steps.config.outputs.SOURCE_DIR }}
-          BUILD_SYSTEM: ${{ steps.config.outputs.BUILD_SYSTEM }}
-          ARTIFACT_NAME: ${{ steps.config.outputs.ARTIFACT_NAME }}
-        run: |
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "ARMORPAINT BUILD SUMMARY"
-          Write-Host "=========================================="
-
-          Write-Host "Version: $env:VERSION"
-          Write-Host "Source: $env:SOURCE_DIR"
-          Write-Host "Build system: $env:BUILD_SYSTEM"
-          Write-Host "Artifact: $env:ARTIFACT_NAME"
-          Write-Host "Run ID: $env:GITHUB_RUN_ID"
-          Write-Host ""
-          Write-Host "Review earlier stages if the build failed."
+            if ($solutions.Count -eq 0
