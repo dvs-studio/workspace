@@ -1,0 +1,146 @@
+name: ArmorPaint - Clone and Prepare Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Select the ArmorPaint source revision"
+        type: choice
+        required: true
+        default: "26.09"
+        options:
+          - "26.09"
+          - "2025"
+          - "0.9-September"
+
+permissions:
+  contents: read
+
+jobs:
+  clone:
+    name: Clone ArmorPaint Source
+    runs-on: windows-latest
+
+    steps:
+      - name: Select source revision
+        id: source
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+
+          switch ($version) {
+            "26.09" {
+              $ref = "26.09"
+              $folder = "armorpaint-260"
+            }
+
+            "2025" {
+              $ref = "6c2e887777930cd72606a4360a1d33e1e48476f0"
+              $folder = "armorpaint-2025"
+            }
+
+            "0.9-September" {
+              $ref = "23.09"
+              $folder = "armorpaint-09"
+            }
+
+            default {
+              throw "Unsupported ArmorPaint version: $version"
+            }
+          }
+
+          "SOURCE_REF=$ref" >> $env:GITHUB_OUTPUT
+          "SOURCE_FOLDER=$folder" >> $env:GITHUB_OUTPUT
+          "SOURCE_VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Clone ArmorPaint repository
+        shell: pwsh
+        run: |
+          $ref = "${{ steps.source.outputs.SOURCE_REF }}"
+          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+
+          git clone `
+            --branch $ref `
+            --single-branch `
+            https://github.com/armory3d/armorpaint.git `
+            $folder
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clone ArmorPaint revision: $ref"
+          }
+
+          git -C $folder rev-parse HEAD
+
+      - name: Initialize available submodules
+        shell: pwsh
+        run: |
+          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+
+          if (Test-Path "$folder/.gitmodules") {
+            Write-Host "Submodules found:"
+            Get-Content "$folder/.gitmodules"
+
+            git -C $folder submodule update --init --recursive
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Some submodules could not be initialized."
+
+              Write-Host "Continuing with source inspection."
+            }
+          }
+          else {
+            Write-Host "No .gitmodules file was found."
+          }
+
+      - name: Inspect repository structure
+        shell: pwsh
+        run: |
+          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+
+          Write-Host "Selected source: $folder"
+          Write-Host "Repository root:"
+          Get-ChildItem $folder -Force |
+            Select-Object Name, Mode
+
+          Write-Host "Build-related files:"
+
+          Get-ChildItem $folder `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -match '^(make|make\.bat|make\.js|build\.bat|CMakeLists\.txt|.*\.sln)$'
+            } |
+            Select-Object -First 100 -ExpandProperty FullName
+
+          Write-Host "Submodule status:"
+          git -C $folder submodule status
+
+      - name: Create source archive
+        shell: pwsh
+        run: |
+          $folder = "${{ steps.source.outputs.SOURCE_FOLDER }}"
+          $version = "${{ steps.source.outputs.SOURCE_VERSION }}"
+
+          $archive = "armorpaint-source-$version.zip"
+
+          Compress-Archive `
+            -Path "$folder/*" `
+            -DestinationPath $archive `
+            -CompressionLevel Optimal
+
+          if (!(Test-Path $archive)) {
+            throw "Source archive was not created."
+          }
+
+          Write-Host "Source archive created:"
+          Get-Item $archive |
+            Select-Object Name, Length
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-source-${{ inputs.version }}
+          path: armorpaint-source-${{ inputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 30
