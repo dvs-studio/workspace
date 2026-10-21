@@ -4,155 +4,350 @@ on:
   workflow_dispatch:
     inputs:
       build_260:
-        description: 'Build ArmorPaint 26.09 (2026 release)'
+        description: "Build ArmorPaint 26.09"
         type: boolean
         default: true
       build_250:
-        description: 'Build ArmorPaint 25.0 (2025 commit)'
+        description: "Build ArmorPaint 25.0 (selected commit)"
         type: boolean
         default: true
       build_09:
-        description: 'Build ArmorPaint 0.9 (23.08 tag)'
+        description: "Build ArmorPaint 0.9 (23.08 tag)"
         type: boolean
         default: true
 
+permissions:
+  contents: write
+
 jobs:
   build_260:
-    if: inputs.build_260
+    name: Build ArmorPaint 26.09
+    if: ${{ inputs.build_260 }}
     runs-on: windows-latest
+
     steps:
-      - name: Checkout 26.09
+      - name: Clone official ArmorPaint source
         uses: actions/checkout@v4
         with:
-          ref: '26.09'
-          submodules: 'recursive'
+          repository: armorpaint/armorpaint
+          ref: "26.09"
+          path: armorpaint-260
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      - name: Build (Modern)
+      - name: Check source and build tools
+        shell: pwsh
         run: |
-          cd paint
-          ../base/make --compile
-
-      - name: Zip Build
-        run: |
-          # Adjust the path if the build output is located elsewhere
-          if (Test-Path "paint/build") {
-            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-26.09-win64.zip"
-          } elseif (Test-Path "build") {
-            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-26.09-win64.zip"
-          } else {
-            Write-Error "Build output not found!"
-            exit 1
+          if (!(Test-Path "armorpaint-260/paint")) {
+            throw "Expected paint directory was not found."
           }
 
-      - name: Upload Artifact
+          if (!(Test-Path "armorpaint-260/base/make")) {
+            throw "Expected base/make build script was not found."
+          }
+
+          git -C armorpaint-260 submodule status
+
+      - name: Compile ArmorPaint
+        shell: pwsh
+        run: |
+          Set-Location armorpaint-260/paint
+          bash ../base/make --compile
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ArmorPaint 26.09 compilation failed."
+          }
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          $root = "armorpaint-260"
+          $zip = "armorpaint-26.09-win64.zip"
+
+          $candidates = @(
+            "$root/paint/build",
+            "$root/build",
+            "$root/paint/Krom"
+          )
+
+          $output = $null
+
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate) {
+              $exe = Get-ChildItem $candidate -Filter "*.exe" -File -Recurse |
+                Select-Object -First 1
+
+              if ($exe) {
+                $output = $candidate
+                break
+              }
+            }
+          }
+
+          if (!$output) {
+            Get-ChildItem $root -Filter "*.exe" -File -Recurse |
+              Select-Object -ExpandProperty FullName
+
+            throw "No Windows executable was found. Inspect the build logs."
+          }
+
+          Compress-Archive `
+            -Path "$output/*" `
+            -DestinationPath $zip `
+            -CompressionLevel Optimal
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: armorpaint-26.09
+          name: armorpaint-26.09-win64
           path: armorpaint-26.09-win64.zip
+          if-no-files-found: error
 
   build_250:
-    if: inputs.build_250
+    name: Build ArmorPaint 25.0
+    if: ${{ inputs.build_250 }}
     runs-on: windows-latest
+
     steps:
-      - name: Checkout 2025 commit
+      - name: Clone official ArmorPaint source
         uses: actions/checkout@v4
         with:
-          ref: '6c2e887777930cd72606a4360a1d33e1e48476f0'
-          submodules: 'recursive'
+          repository: armorpaint/armorpaint
+          ref: "6c2e887777930cd72606a4360a1d33e1e48476f0"
+          path: armorpaint-250
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      - name: Build (Modern)
+      - name: Check source and build tools
+        shell: pwsh
         run: |
-          cd paint
-          ../base/make --compile
-
-      - name: Zip Build
-        run: |
-          if (Test-Path "paint/build") {
-            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-250-win64.zip"
-          } elseif (Test-Path "build") {
-            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-250-win64.zip"
-          } else {
-            Write-Error "Build output not found!"
-            exit 1
+          if (!(Test-Path "armorpaint-250/paint")) {
+            throw "Expected paint directory was not found."
           }
 
-      - name: Upload Artifact
+          if (!(Test-Path "armorpaint-250/base/make")) {
+            throw "Expected base/make build script was not found."
+          }
+
+          git -C armorpaint-250 submodule status
+
+      - name: Compile ArmorPaint
+        shell: pwsh
+        run: |
+          Set-Location armorpaint-250/paint
+          bash ../base/make --compile
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ArmorPaint 25.0 compilation failed."
+          }
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          $root = "armorpaint-250"
+          $zip = "armorpaint-250-win64.zip"
+
+          $candidates = @(
+            "$root/paint/build",
+            "$root/build",
+            "$root/paint/Krom"
+          )
+
+          $output = $null
+
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate) {
+              $exe = Get-ChildItem $candidate -Filter "*.exe" -File -Recurse |
+                Select-Object -First 1
+
+              if ($exe) {
+                $output = $candidate
+                break
+              }
+            }
+          }
+
+          if (!$output) {
+            Get-ChildItem $root -Filter "*.exe" -File -Recurse |
+              Select-Object -ExpandProperty FullName
+
+            throw "No Windows executable was found. Inspect the build logs."
+          }
+
+          Compress-Archive `
+            -Path "$output/*" `
+            -DestinationPath $zip `
+            -CompressionLevel Optimal
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: armorpaint-250
+          name: armorpaint-250-win64
           path: armorpaint-250-win64.zip
+          if-no-files-found: error
 
   build_09:
-    if: inputs.build_09
+    name: Build ArmorPaint 0.9
+    if: ${{ inputs.build_09 }}
     runs-on: windows-latest
+
     steps:
-      - name: Checkout 23.08
+      - name: Clone official ArmorPaint source
         uses: actions/checkout@v4
         with:
-          ref: '23.08'
-          submodules: 'recursive'
+          repository: armorpaint/armorpaint
+          ref: "23.08"
+          path: armorpaint-09
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      - name: Build (Legacy Kromx)
-        run: |
-          cd paint
-          node Kromx/make -g direct3d11
-          cd Kromx
-          # Unpack V8 libraries if required by the build
-          7z x V8\Libraries\win32\release\v8_monolith.7z -y
-          node Kinc/make -g direct3d11
-          # Build the generated Visual Studio solution
-          msbuild Krom.sln /p:Configuration=Release /p:Platform=x64
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-      - name: Zip Build
+      - name: Verify legacy build files
+        shell: pwsh
         run: |
-          # The legacy build typically outputs to 'build' or 'paint/build'
-          if (Test-Path "paint/build") {
-            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-09-win64.zip"
-          } elseif (Test-Path "build") {
-            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-09-win64.zip"
-          } else {
-            Write-Error "Build output not found!"
-            exit 1
+          if (!(Test-Path "armorpaint-09/paint/Kromx")) {
+            throw "Legacy Kromx directory was not found. Check the 23.08 source layout."
           }
 
-      - name: Upload Artifact
+      - name: Compile legacy Windows build
+        shell: pwsh
+        run: |
+          Set-Location armorpaint-09/paint
+
+          node Kromx/make -g direct3d11
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Kromx generation failed."
+          }
+
+          Set-Location Kromx
+
+          if (Test-Path "V8/Libraries/win32/release/v8_monolith.7z") {
+            7z x V8/Libraries/win32/release/v8_monolith.7z -y
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not extract the V8 libraries."
+            }
+          }
+
+          node Kinc/make -g direct3d11
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Kinc project generation failed."
+          }
+
+          $solution = Get-ChildItem -Filter "*.sln" -File |
+            Select-Object -First 1
+
+          if (!$solution) {
+            throw "No Visual Studio solution was generated."
+          }
+
+          msbuild $solution.FullName /m /p:Configuration=Release /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Legacy MSBuild compilation failed."
+          }
+
+      - name: Package legacy Windows build
+        shell: pwsh
+        run: |
+          $root = "armorpaint-09"
+
+          $exe = Get-ChildItem $root -Filter "*.exe" -File -Recurse |
+            Where-Object {
+              $_.FullName -match "\\(build|Release|x64)\\"
+            } |
+            Select-Object -First 1
+
+          if (!$exe) {
+            Get-ChildItem $root -Filter "*.exe" -File -Recurse |
+              Select-Object -ExpandProperty FullName
+
+            throw "No compiled legacy executable was found."
+          }
+
+          $output = Split-Path $exe.FullName -Parent
+
+          Compress-Archive `
+            -Path "$output/*" `
+            -DestinationPath "armorpaint-09-win64.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: armorpaint-09
+          name: armorpaint-09-win64
           path: armorpaint-09-win64.zip
+          if-no-files-found: error
 
   release:
-    needs: [build_260, build_250, build_09]
-    if: always() && (inputs.build_260 || inputs.build_250 || inputs.build_09)
-    runs-on: windows-latest
+    name: Publish Windows Builds
+    needs:
+      - build_260
+      - build_250
+      - build_09
+
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        (
+          inputs.build_260 ||
+          inputs.build_250 ||
+          inputs.build_09
+        ) &&
+        (
+          needs.build_260.result == 'success' ||
+          needs.build_250.result == 'success' ||
+          needs.build_09.result == 'success'
+        )
+      }}
+
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Download all artifacts
+      - name: Download successful build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: armorpaint-*-win64
+          merge-multiple: false
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: List release files
+        shell: bash
+        run: |
+          find artifacts -type f -name "*.zip" -print
+
+          if ! find artifacts -type f -name "*.zip" | grep -q .; then
+            echo "No ZIP packages were produced."
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: armorpaint-build-${{ github.run_number }}
           name: ArmorPaint Windows Build ${{ github.run_number }}
           draft: false
-          prerelease: false
+          prerelease: true
           files: artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
