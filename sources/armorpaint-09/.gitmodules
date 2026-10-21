@@ -1,0 +1,4 @@
+[submodule "armorcore"]
+	path = armorcore
+	url = https://github.com/armory3d/armorcore
+	shallow = true

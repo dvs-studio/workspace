@@ -1,0 +1,17 @@
+ArmorPaint Source Migration Manifest
+====================================
+
+Selected version: 0.9-September
+Requested Git reference: 23.09
+Source cloning workflow Run ID: 39624466224
+Destination repository: dvs-studio/workspace
+Migration workflow Run ID: 39626532987
+Migration timestamp UTC: 2026-10-21T15:32:03Z
+Source archive: armorpaint-source-0.9-September.zip
+Installed directory: sources/armorpaint-09
+
+Important:
+This directory contains source files extracted from a GitHub Actions artifact.
+The original .git database is not included in the archive.
+Git submodule contents may be missing if their checkout failed.
+Successful extraction does not guarantee that the source will compile.
