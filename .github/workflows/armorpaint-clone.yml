@@ -7,12 +7,14 @@ on:
         description: "Build ArmorPaint 26.09"
         type: boolean
         default: true
+
       build_250:
-        description: "Build ArmorPaint 25.0 (selected commit)"
+        description: "Build ArmorPaint 25.0 (existing commit)"
         type: boolean
         default: true
+
       build_09:
-        description: "Build ArmorPaint 0.9 (23.08 tag)"
+        description: "Build ArmorPaint 0.9 Sept (23.09)"
         type: boolean
         default: true
 
@@ -26,10 +28,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Clone official ArmorPaint source
+      - name: Clone ArmorPaint 26.09 source
         uses: actions/checkout@v4
         with:
-          repository: armorpaint/armorpaint
+          repository: armory3d/armorpaint
           ref: "26.09"
           path: armorpaint-260
           submodules: recursive
@@ -40,34 +42,36 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Check source and build tools
+      - name: Inspect source and build scripts
         shell: pwsh
         run: |
-          if (!(Test-Path "armorpaint-260/paint")) {
-            throw "Expected paint directory was not found."
+          $root = "armorpaint-260"
+
+          if (!(Test-Path "$root/paint")) {
+            throw "The paint directory was not found."
           }
 
-          if (!(Test-Path "armorpaint-260/base/make")) {
-            throw "Expected base/make build script was not found."
+          if (!(Test-Path "$root/base/make")) {
+            throw "The base/make build script was not found."
           }
 
-          git -C armorpaint-260 submodule status
+          git -C $root submodule status
 
       - name: Compile ArmorPaint
         shell: pwsh
         run: |
           Set-Location armorpaint-260/paint
+
           bash ../base/make --compile
 
           if ($LASTEXITCODE -ne 0) {
             throw "ArmorPaint 26.09 compilation failed."
           }
 
-      - name: Package Windows build
+      - name: Package Windows executable
         shell: pwsh
         run: |
           $root = "armorpaint-260"
-          $zip = "armorpaint-26.09-win64.zip"
 
           $candidates = @(
             "$root/paint/build",
@@ -93,12 +97,12 @@ jobs:
             Get-ChildItem $root -Filter "*.exe" -File -Recurse |
               Select-Object -ExpandProperty FullName
 
-            throw "No Windows executable was found. Inspect the build logs."
+            throw "No executable found. Inspect the build logs."
           }
 
           Compress-Archive `
             -Path "$output/*" `
-            -DestinationPath $zip `
+            -DestinationPath "armorpaint-26.09-win64.zip" `
             -CompressionLevel Optimal
 
       - name: Upload build artifact
@@ -114,10 +118,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Clone official ArmorPaint source
+      - name: Clone ArmorPaint 2025 source
         uses: actions/checkout@v4
         with:
-          repository: armorpaint/armorpaint
+          repository: armory3d/armorpaint
           ref: "6c2e887777930cd72606a4360a1d33e1e48476f0"
           path: armorpaint-250
           submodules: recursive
@@ -128,34 +132,36 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Check source and build tools
+      - name: Inspect source and build scripts
         shell: pwsh
         run: |
-          if (!(Test-Path "armorpaint-250/paint")) {
-            throw "Expected paint directory was not found."
+          $root = "armorpaint-250"
+
+          if (!(Test-Path "$root/paint")) {
+            throw "The paint directory was not found."
           }
 
-          if (!(Test-Path "armorpaint-250/base/make")) {
-            throw "Expected base/make build script was not found."
+          if (!(Test-Path "$root/base/make")) {
+            throw "The base/make build script was not found."
           }
 
-          git -C armorpaint-250 submodule status
+          git -C $root submodule status
 
       - name: Compile ArmorPaint
         shell: pwsh
         run: |
           Set-Location armorpaint-250/paint
+
           bash ../base/make --compile
 
           if ($LASTEXITCODE -ne 0) {
             throw "ArmorPaint 25.0 compilation failed."
           }
 
-      - name: Package Windows build
+      - name: Package Windows executable
         shell: pwsh
         run: |
           $root = "armorpaint-250"
-          $zip = "armorpaint-250-win64.zip"
 
           $candidates = @(
             "$root/paint/build",
@@ -181,33 +187,33 @@ jobs:
             Get-ChildItem $root -Filter "*.exe" -File -Recurse |
               Select-Object -ExpandProperty FullName
 
-            throw "No Windows executable was found. Inspect the build logs."
+            throw "No executable found. Inspect the build logs."
           }
 
           Compress-Archive `
             -Path "$output/*" `
-            -DestinationPath $zip `
+            -DestinationPath "armorpaint-25.0-win64.zip" `
             -CompressionLevel Optimal
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: armorpaint-250-win64
-          path: armorpaint-250-win64.zip
+          name: armorpaint-25.0-win64
+          path: armorpaint-25.0-win64.zip
           if-no-files-found: error
 
   build_09:
-    name: Build ArmorPaint 0.9
+    name: Build ArmorPaint 0.9 Sept
     if: ${{ inputs.build_09 }}
     runs-on: windows-latest
 
     steps:
-      - name: Clone official ArmorPaint source
+      - name: Clone ArmorPaint 0.9 Sept source
         uses: actions/checkout@v4
         with:
-          repository: armorpaint/armorpaint
-          ref: "23.08"
-          path: armorpaint-09
+          repository: armory3d/armorpaint
+          ref: "23.09"
+          path: armorpaint-09-sept
           submodules: recursive
           fetch-depth: 0
 
@@ -222,19 +228,21 @@ jobs:
       - name: Verify legacy build files
         shell: pwsh
         run: |
-          if (!(Test-Path "armorpaint-09/paint/Kromx")) {
-            throw "Legacy Kromx directory was not found. Check the 23.08 source layout."
+          $root = "armorpaint-09-sept"
+
+          if (!(Test-Path "$root/paint/Kromx")) {
+            throw "The expected legacy Kromx directory was not found."
           }
 
       - name: Compile legacy Windows build
         shell: pwsh
         run: |
-          Set-Location armorpaint-09/paint
+          Set-Location armorpaint-09-sept/paint
 
           node Kromx/make -g direct3d11
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Kromx generation failed."
+            throw "Kromx project generation failed."
           }
 
           Set-Location Kromx
@@ -243,7 +251,7 @@ jobs:
             7z x V8/Libraries/win32/release/v8_monolith.7z -y
 
             if ($LASTEXITCODE -ne 0) {
-              throw "Could not extract the V8 libraries."
+              throw "V8 library extraction failed."
             }
           }
 
@@ -263,13 +271,13 @@ jobs:
           msbuild $solution.FullName /m /p:Configuration=Release /p:Platform=x64
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Legacy MSBuild compilation failed."
+            throw "Legacy ArmorPaint compilation failed."
           }
 
-      - name: Package legacy Windows build
+      - name: Package ArmorPaint 0.9 Sept
         shell: pwsh
         run: |
-          $root = "armorpaint-09"
+          $root = "armorpaint-09-sept"
 
           $exe = Get-ChildItem $root -Filter "*.exe" -File -Recurse |
             Where-Object {
@@ -288,18 +296,18 @@ jobs:
 
           Compress-Archive `
             -Path "$output/*" `
-            -DestinationPath "armorpaint-09-win64.zip" `
+            -DestinationPath "armorpaint-0.9-sept-win64.zip" `
             -CompressionLevel Optimal
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: armorpaint-09-win64
-          path: armorpaint-09-win64.zip
+          name: armorpaint-0.9-sept-win64
+          path: armorpaint-0.9-sept-win64.zip
           if-no-files-found: error
 
   release:
-    name: Publish Windows Builds
+    name: Publish ArmorPaint Windows Builds
     needs:
       - build_260
       - build_250
@@ -331,7 +339,7 @@ jobs:
           pattern: armorpaint-*-win64
           merge-multiple: false
 
-      - name: List release files
+      - name: Verify release packages
         shell: bash
         run: |
           find artifacts -type f -name "*.zip" -print
