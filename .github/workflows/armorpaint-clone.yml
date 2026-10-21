@@ -1,0 +1,158 @@
+name: Build ArmorPaint (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_260:
+        description: 'Build ArmorPaint 26.09 (2026 release)'
+        type: boolean
+        default: true
+      build_250:
+        description: 'Build ArmorPaint 25.0 (2025 commit)'
+        type: boolean
+        default: true
+      build_09:
+        description: 'Build ArmorPaint 0.9 (23.08 tag)'
+        type: boolean
+        default: true
+
+jobs:
+  build_260:
+    if: inputs.build_260
+    runs-on: windows-latest
+    steps:
+      - name: Checkout 26.09
+        uses: actions/checkout@v4
+        with:
+          ref: '26.09'
+          submodules: 'recursive'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build (Modern)
+        run: |
+          cd paint
+          ../base/make --compile
+
+      - name: Zip Build
+        run: |
+          # Adjust the path if the build output is located elsewhere
+          if (Test-Path "paint/build") {
+            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-26.09-win64.zip"
+          } elseif (Test-Path "build") {
+            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-26.09-win64.zip"
+          } else {
+            Write-Error "Build output not found!"
+            exit 1
+          }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-26.09
+          path: armorpaint-26.09-win64.zip
+
+  build_250:
+    if: inputs.build_250
+    runs-on: windows-latest
+    steps:
+      - name: Checkout 2025 commit
+        uses: actions/checkout@v4
+        with:
+          ref: '6c2e887777930cd72606a4360a1d33e1e48476f0'
+          submodules: 'recursive'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build (Modern)
+        run: |
+          cd paint
+          ../base/make --compile
+
+      - name: Zip Build
+        run: |
+          if (Test-Path "paint/build") {
+            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-250-win64.zip"
+          } elseif (Test-Path "build") {
+            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-250-win64.zip"
+          } else {
+            Write-Error "Build output not found!"
+            exit 1
+          }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-250
+          path: armorpaint-250-win64.zip
+
+  build_09:
+    if: inputs.build_09
+    runs-on: windows-latest
+    steps:
+      - name: Checkout 23.08
+        uses: actions/checkout@v4
+        with:
+          ref: '23.08'
+          submodules: 'recursive'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build (Legacy Kromx)
+        run: |
+          cd paint
+          node Kromx/make -g direct3d11
+          cd Kromx
+          # Unpack V8 libraries if required by the build
+          7z x V8\Libraries\win32\release\v8_monolith.7z -y
+          node Kinc/make -g direct3d11
+          # Build the generated Visual Studio solution
+          msbuild Krom.sln /p:Configuration=Release /p:Platform=x64
+
+      - name: Zip Build
+        run: |
+          # The legacy build typically outputs to 'build' or 'paint/build'
+          if (Test-Path "paint/build") {
+            Compress-Archive -Path "paint/build/*" -DestinationPath "armorpaint-09-win64.zip"
+          } elseif (Test-Path "build") {
+            Compress-Archive -Path "build/*" -DestinationPath "armorpaint-09-win64.zip"
+          } else {
+            Write-Error "Build output not found!"
+            exit 1
+          }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-09
+          path: armorpaint-09-win64.zip
+
+  release:
+    needs: [build_260, build_250, build_09]
+    if: always() && (inputs.build_260 || inputs.build_250 || inputs.build_09)
+    runs-on: windows-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: armorpaint-build-${{ github.run_number }}
+          name: ArmorPaint Windows Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
