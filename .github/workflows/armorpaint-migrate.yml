@@ -1,0 +1,328 @@
+name: ArmorPaint - Migrate Source Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Select the source artifact version"
+        type: choice
+        required: true
+        default: "26.09"
+        options:
+          - "26.09"
+          - "2025"
+          - "0.9-September"
+
+      run_id:
+        description: "GitHub Actions run ID from the successful cloning workflow"
+        type: string
+        required: true
+
+      destination:
+        description: "Repository directory for the migrated source"
+        type: choice
+        required: true
+        default: "vendor/armorpaint"
+        options:
+          - "vendor/armorpaint"
+          - "sources/armorpaint"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  migrate:
+    name: Migrate ArmorPaint Source into Repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout destination repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate migration inputs
+        id: config
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
+          DESTINATION: ${{ inputs.destination }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "ARMORPAINT SOURCE MIGRATION"
+          echo "=========================================="
+
+          case "$SOURCE_VERSION" in
+            "26.09")
+              ARTIFACT_NAME="armorpaint-source-26.09"
+              ;;
+            "2025")
+              ARTIFACT_NAME="armorpaint-source-2025"
+              ;;
+            "0.9-September")
+              ARTIFACT_NAME="armorpaint-source-0.9-September"
+              ;;
+            *)
+              echo "::error::Unsupported source version."
+              exit 1
+              ;;
+          esac
+
+          if [[ ! "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::The workflow run ID must contain digits only."
+            exit 1
+          fi
+
+          case "$DESTINATION" in
+            "vendor/armorpaint"|"sources/armorpaint")
+              ;;
+            *)
+              echo "::error::Unsupported destination directory."
+              exit 1
+              ;;
+          esac
+
+          echo "Selected version: $SOURCE_VERSION"
+          echo "Artifact: $ARTIFACT_NAME"
+          echo "Source workflow run: $SOURCE_RUN_ID"
+          echo "Destination: $DESTINATION"
+          echo "Repository: $REPOSITORY"
+
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "destination=$DESTINATION" >> "$GITHUB_OUTPUT"
+
+      - name: Download source artifact from selected run
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.config.outputs.artifact_name }}
+          path: migration-download
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify downloaded archive
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "VERIFYING SOURCE ARTIFACT"
+          echo "=========================================="
+
+          ARCHIVE="migration-download/armorpaint-source-${SOURCE_VERSION}.zip"
+
+          if [[ ! -f "$ARCHIVE" ]]; then
+            echo "::error::Expected source archive was not found: $ARCHIVE"
+            echo "Downloaded files:"
+            find migration-download -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+
+          echo "Archive found:"
+          ls -lh "$ARCHIVE"
+
+          if ! unzip -t "$ARCHIVE"; then
+            echo "::error::The source ZIP failed its integrity test."
+            exit 1
+          fi
+
+          echo "Archive integrity check passed."
+
+      - name: Extract source safely
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          DESTINATION: ${{ steps.config.outputs.destination }}
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="migration-download/armorpaint-source-${SOURCE_VERSION}.zip"
+          EXTRACT_DIR="migration-extracted"
+
+          echo "=========================================="
+          echo "EXTRACTING SOURCE"
+          echo "=========================================="
+
+          mkdir -p "$EXTRACT_DIR"
+
+          # Reject archive entries that could write outside the extraction directory.
+          python3 - "$ARCHIVE" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import PurePosixPath
+
+          archive = sys.argv[1]
+
+          with zipfile.ZipFile(archive) as zf:
+              for entry in zf.infolist():
+                  name = entry.filename.replace("\\", "/")
+                  path = PurePosixPath(name)
+
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(
+                          f"Unsafe archive path rejected: {entry.filename}"
+                      )
+
+                  # Reject symbolic links to avoid escaping the extraction directory.
+                  mode = (entry.external_attr >> 16) & 0o170000
+                  if mode == 0o120000:
+                      raise SystemExit(
+                          f"Symbolic link rejected: {entry.filename}"
+                      )
+
+              zf.extractall("migration-extracted")
+
+          print("Archive paths validated and extracted.")
+          PY
+
+          echo "Extracted source contents:"
+          find "$EXTRACT_DIR" -maxdepth 2 -mindepth 1 -print | head -200
+
+          if [[ -z "$(find "$EXTRACT_DIR" -mindepth 1 -print -quit)" ]]; then
+            echo "::error::The extracted source directory is empty."
+            exit 1
+          fi
+
+          echo "Source extraction completed."
+
+      - name: Check destination and preserve existing files
+        shell: bash
+        env:
+          DESTINATION: ${{ steps.config.outputs.destination }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "CHECKING DESTINATION"
+          echo "=========================================="
+
+          if [[ -e "$DESTINATION" ]]; then
+            echo "::error::Destination already exists: $DESTINATION"
+            echo "Migration stopped to avoid overwriting existing files."
+            echo "Choose a different destination or deliberately archive the old source first."
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$DESTINATION")"
+          mv migration-extracted "$DESTINATION"
+
+          echo "Source migrated to: $DESTINATION"
+
+      - name: Write migration manifest
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
+          SOURCE_REF: ${{ inputs.version == '26.09' && '26.09' || inputs.version == '2025' && '6c2e887777930cd72606a4360a1d33e1e48476f0' || '23.09' }}
+          DESTINATION: ${{ steps.config.outputs.destination }}
+        run: |
+          set -euo pipefail
+
+          MANIFEST="$DESTINATION/ARMORPAINT_SOURCE_MANIFEST.txt"
+
+          cat > "$MANIFEST" <<EOF
+          ArmorPaint Source Migration Manifest
+          ====================================
+
+          Selected version: $SOURCE_VERSION
+          Requested Git reference: $SOURCE_REF
+          Source workflow run ID: $SOURCE_RUN_ID
+          Destination repository: $GITHUB_REPOSITORY
+          Migration workflow run ID: $GITHUB_RUN_ID
+          Migration timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          Source archive: armorpaint-source-$SOURCE_VERSION.zip
+
+          Important:
+          This source was extracted from a GitHub Actions artifact.
+          Git submodule contents may not be included in the archive.
+          Inspect dependencies before compiling.
+          EOF
+
+          echo "Migration manifest created:"
+          cat "$MANIFEST"
+
+      - name: Generate source inventory
+        shell: bash
+        env:
+          DESTINATION: ${{ steps.config.outputs.destination }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "SOURCE INVENTORY"
+          echo "=========================================="
+
+          echo "Top-level source entries:"
+          find "$DESTINATION" -maxdepth 2 -mindepth 1 -print | head -250
+
+          echo ""
+          echo "Source directory size:"
+          du -sh "$DESTINATION"
+
+          echo ""
+          echo "Potential build files:"
+          find "$DESTINATION" -type f \
+            \( \
+              -name 'make' -o \
+              -name 'make.bat' -o \
+              -name 'make.js' -o \
+              -name '*.sln' -o \
+              -name 'CMakeLists.txt' -o \
+              -name 'Cargo.toml' \
+            \) -print | head -200
+
+      - name: Commit migrated source
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          DESTINATION: ${{ steps.config.outputs.destination }}
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "COMMITTING MIGRATED SOURCE"
+          echo "=========================================="
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- "$DESTINATION"
+
+          if git diff --cached --quiet; then
+            echo "No new changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Add ArmorPaint $SOURCE_VERSION source from workflow run $SOURCE_RUN_ID"
+
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+          echo "Migrated source committed successfully."
+
+      - name: Migration summary
+        if: always()
+        shell: bash
+        env:
+          SOURCE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
+          DESTINATION: ${{ inputs.destination }}
+        run: |
+          echo "=========================================="
+          echo "ARMORPAINT MIGRATION SUMMARY"
+          echo "=========================================="
+          echo "Version: $SOURCE_VERSION"
+          echo "Source workflow run: $SOURCE_RUN_ID"
+          echo "Destination: $DESTINATION"
+          echo "Migration workflow run: $GITHUB_RUN_ID"
+          echo "Review earlier stages for errors."
