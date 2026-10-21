@@ -36,36 +36,34 @@ jobs:
         with:
           repository: armory3d/armorpaint
           ref: "26.09"
-          path: armorpaint-260
+          path: armorpaint
           submodules: recursive
           fetch-depth: 0
 
       - name: Configure Visual Studio
         uses: microsoft/setup-msbuild@v2
 
-      - name: Verify source files
+      - name: Verify source and build tools
         shell: pwsh
         run: |
-          $root = "armorpaint-260"
-
-          if (!(Test-Path "$root/paint")) {
-            throw "ArmorPaint paint directory was not found."
+          if (!(Test-Path "armorpaint/paint")) {
+            throw "ArmorPaint source directory is missing."
           }
 
-          if (!(Test-Path "$root/base/make.bat")) {
-            throw "Windows build script base/make.bat was not found."
+          if (!(Test-Path "armorpaint/base/make.bat")) {
+            throw "Expected Windows build script base/make.bat is missing."
           }
 
-          if (!(Test-Path "$root/base/tools/bin/windows_x64/amake.exe")) {
-            throw "Windows amake.exe was not found."
+          if (!(Test-Path "armorpaint/base/tools/bin/windows_x64/amake.exe")) {
+            throw "Expected Windows amake.exe is missing."
           }
 
-          git -C $root submodule status
+          git -C armorpaint submodule status
 
       - name: Generate Visual Studio project
         shell: pwsh
         run: |
-          Set-Location "armorpaint-260/paint"
+          Set-Location armorpaint/paint
 
           & "..\base\make"
 
@@ -73,36 +71,26 @@ jobs:
             throw "ArmorPaint project generation failed."
           }
 
-          $solutions = Get-ChildItem "build" `
-            -Filter "*.sln" `
-            -File `
-            -Recurse
+          $solutions = Get-ChildItem "build" -Filter "*.sln" -File -Recurse
 
           if (!$solutions) {
             throw "No Visual Studio solution was generated."
           }
 
           $solutions | ForEach-Object {
-            Write-Host "Generated solution: $($_.FullName)"
+            Write-Host "Found solution: $($_.FullName)"
           }
 
       - name: Compile ArmorPaint
         shell: pwsh
         run: |
-          $root = "armorpaint-260/paint"
-
-          $solutions = Get-ChildItem "$root/build" `
-            -Filter "*.sln" `
-            -File `
-            -Recurse
+          $solutions = Get-ChildItem "armorpaint/paint/build" -Filter "*.sln" -File -Recurse
 
           if (!$solutions) {
-            throw "No Visual Studio solution is available."
+            throw "No Visual Studio solution is available to compile."
           }
 
           $solution = $solutions | Select-Object -First 1
-
-          Write-Host "Compiling: $($solution.FullName)"
 
           msbuild $solution.FullName `
             /m `
@@ -110,13 +98,13 @@ jobs:
             /p:Platform=x64
 
           if ($LASTEXITCODE -ne 0) {
-            throw "ArmorPaint 26.09 compilation failed."
+            throw "ArmorPaint compilation failed."
           }
 
-      - name: Copy and package compiled files
+      - name: Package ArmorPaint
         shell: pwsh
         run: |
-          $root = "armorpaint-260/paint"
+          $root = "armorpaint/paint"
 
           $exe = Get-ChildItem "$root/build" `
             -Filter "ArmorPaint.exe" `
@@ -125,42 +113,30 @@ jobs:
             Select-Object -First 1
 
           if (!$exe) {
-            Write-Host "Executable files found:"
-            Get-ChildItem "$root/build" `
-              -Filter "*.exe" `
-              -File `
-              -Recurse |
+            Get-ChildItem "$root/build" -Filter "*.exe" -File -Recurse |
               Select-Object -ExpandProperty FullName
 
-            throw "ArmorPaint.exe was not found."
+            throw "ArmorPaint.exe was not found after compilation."
           }
 
           $output = Split-Path $exe.FullName -Parent
           $package = "package-260"
 
-          New-Item -ItemType Directory -Path $package -Force |
-            Out-Null
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
 
           Copy-Item "$output/*" $package -Recurse -Force
-
-          if (!(Test-Path "$package/ArmorPaint.exe")) {
-            throw "ArmorPaint.exe was not copied into the package."
-          }
 
           Compress-Archive `
             -Path "$package/*" `
             -DestinationPath "armorpaint-26.09-win64.zip" `
             -CompressionLevel Optimal
 
-          Write-Host "Created armorpaint-26.09-win64.zip"
-
-      - name: Upload ArmorPaint 26.09
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
           name: armorpaint-26.09-win64
           path: armorpaint-26.09-win64.zip
           if-no-files-found: error
-          retention-days: 30
 
   build_250:
     name: Build ArmorPaint 2025
@@ -168,26 +144,243 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout ArmorPaint 2025 source
+      - name: Checkout ArmorPaint source
         uses: actions/checkout@v4
         with:
           repository: armory3d/armorpaint
-          ref: "6c2e887777930cd72606a4360a1d33e1e48476f0
-"
-          path: armorpaint-250
+          ref: "6c2e887777930cd72606a4360a1d33e1e48476f0"
+          path: armorpaint
           submodules: recursive
           fetch-depth: 0
 
       - name: Configure Visual Studio
         uses: microsoft/setup-msbuild@v2
 
-      - name: Verify source files
+      - name: Verify source and build tools
         shell: pwsh
         run: |
-          $root = "armorpaint-250"
-
-          if (!(Test-Path "$root/paint")) {
-            throw "ArmorPaint paint directory was not found."
+          if (!(Test-Path "armorpaint/paint")) {
+            throw "ArmorPaint source directory is missing."
           }
 
-          if (!(Test-Path "$root/base/make.bat"))
+          if (!(Test-Path "armorpaint/base/make.bat")) {
+            throw "Expected Windows build script base/make.bat is missing."
+          }
+
+          if (!(Test-Path "armorpaint/base/tools/bin/windows_x64/amake.exe")) {
+            throw "Expected Windows amake.exe is missing."
+          }
+
+          git -C armorpaint submodule status
+
+      - name: Generate Visual Studio project
+        shell: pwsh
+        run: |
+          Set-Location armorpaint/paint
+
+          & "..\base\make"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ArmorPaint project generation failed."
+          }
+
+          $solutions = Get-ChildItem "build" -Filter "*.sln" -File -Recurse
+
+          if (!$solutions) {
+            throw "No Visual Studio solution was generated."
+          }
+
+          $solutions | ForEach-Object {
+            Write-Host "Found solution: $($_.FullName)"
+          }
+
+      - name: Compile ArmorPaint
+        shell: pwsh
+        run: |
+          $solutions = Get-ChildItem "armorpaint/paint/build" -Filter "*.sln" -File -Recurse
+
+          if (!$solutions) {
+            throw "No Visual Studio solution is available to compile."
+          }
+
+          $solution = $solutions | Select-Object -First 1
+
+          msbuild $solution.FullName `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ArmorPaint compilation failed."
+          }
+
+      - name: Package ArmorPaint
+        shell: pwsh
+        run: |
+          $root = "armorpaint/paint"
+
+          $exe = Get-ChildItem "$root/build" `
+            -Filter "ArmorPaint.exe" `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if (!$exe) {
+            Get-ChildItem "$root/build" -Filter "*.exe" -File -Recurse |
+              Select-Object -ExpandProperty FullName
+
+            throw "ArmorPaint.exe was not found after compilation."
+          }
+
+          $output = Split-Path $exe.FullName -Parent
+          $package = "package-250"
+
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
+
+          Copy-Item "$output/*" $package -Recurse -Force
+
+          Compress-Archive `
+            -Path "$package/*" `
+            -DestinationPath "armorpaint-2025-win64.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: armorpaint-2025-win64
+          path: armorpaint-2025-win64.zip
+          if-no-files-found: error
+
+  build_09:
+    name: Build ArmorPaint 0.9 September
+    if: ${{ inputs.build_09 }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout historical source
+        uses: actions/checkout@v4
+        with:
+          repository: armory3d/armorpaint
+          ref: "23.09"
+          path: armorpaint
+          submodules: false
+          fetch-depth: 0
+
+      - name: Inspect historical source layout
+        shell: pwsh
+        run: |
+          Write-Host "Checking historical ArmorPaint source layout..."
+
+          if (!(Test-Path "armorpaint/paint")) {
+            throw "Historical paint source directory is missing."
+          }
+
+          Get-ChildItem "armorpaint" -Force |
+            Select-Object Name, Mode
+
+          if (Test-Path "armorpaint/.gitmodules") {
+            Get-Content "armorpaint/.gitmodules"
+          }
+
+          Write-Host "Source inspection completed."
+
+      - name: Initialize available ArmorCore submodule
+        shell: pwsh
+        run: |
+          if (Test-Path "armorpaint/armorcore") {
+            git -C armorpaint submodule update --init armorcore
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "ArmorCore submodule initialization failed."
+              Write-Host "The historical source may require an unavailable dependency."
+            }
+          }
+          else {
+            Write-Host "No armorcore directory exists at the expected path."
+          }
+
+      - name: Check legacy build scripts
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "armorpaint/paint/Kromx/make",
+            "armorpaint/paint/Kromx/make.js",
+            "armorpaint/armorcore/Kinc/make",
+            "armorpaint/armorcore/Kinc/make.js"
+          )
+
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate) {
+              Write-Host "Found: $candidate"
+            }
+          }
+
+          $legacyMake = @(
+            "armorpaint/paint/Kromx/make",
+            "armorpaint/paint/Kromx/make.js"
+          ) | Where-Object { Test-Path $_ }
+
+          if (!$legacyMake) {
+            throw "Could not locate the expected legacy Kromx build script. The historical source layout must be verified before compiling this version."
+          }
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Stop if legacy build instructions are unavailable
+        shell: pwsh
+        run: |
+          Write-Host "The historical build scripts have been detected."
+          Write-Host "A verified build command and dependency layout are required before compilation."
+          throw "ArmorPaint 0.9 September compilation is not configured safely yet. Verify this revision's original build instructions before enabling this build."
+
+  release:
+    name: Publish Successful Windows Builds
+    needs:
+      - build_260
+      - build_250
+      - build_09
+
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        (
+          needs.build_260.result == 'success' ||
+          needs.build_250.result == 'success' ||
+          needs.build_09.result == 'success'
+        )
+      }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download successful build packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: armorpaint-*-win64
+          merge-multiple: false
+
+      - name: Verify ZIP packages
+        shell: bash
+        run: |
+          find artifacts -type f -name "*.zip" -print
+
+          if ! find artifacts -type f -name "*.zip" | grep -q .; then
+            echo "No ZIP packages were produced."
+            exit 1
+          fi
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: armorpaint-windows-build-${{ github.run_number }}
+          name: ArmorPaint Windows Build ${{ github.run_number }}
+          draft: false
+          prerelease: true
+          files: artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
