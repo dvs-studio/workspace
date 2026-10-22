@@ -1,0 +1,209 @@
+name: ArmorPaint 1.0 Test Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Compile ArmorPaint 1.0 for Windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Verify source directories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $source = Join-Path $env:GITHUB_WORKSPACE "sources/armorpaint-260"
+          $paint = Join-Path $source "paint"
+          $base = Join-Path $source "base"
+          $make = Join-Path $base "make"
+
+          if (!(Test-Path -LiteralPath $paint -PathType Container)) {
+            throw "Missing paint directory: $paint"
+          }
+
+          if (!(Test-Path -LiteralPath $base -PathType Container)) {
+            throw "Missing base directory: $base"
+          }
+
+          if (!(Test-Path -LiteralPath $make -PathType Leaf)) {
+            throw "Missing build script: $make"
+          }
+
+          Write-Host "Source: $source"
+          Write-Host "Paint: $paint"
+          Write-Host "Build script: $make"
+
+          "SOURCE=$source" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "PAINT=$paint" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BASE=$base" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Compile using the Armoury3D build command
+        shell: bash
+        run: |
+          cd sources/armorpaint-260/paint
+          ../base/make --compile
+
+      - name: Locate generated build files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $source = $env:SOURCE
+          $vendor = Join-Path $source "vendor"
+          $output = Join-Path $vendor "ArmorPaint-1.0-Windows-x64"
+
+          New-Item -ItemType Directory -Path $vendor -Force | Out-Null
+
+          if (Test-Path -LiteralPath $output) {
+            Remove-Item -LiteralPath $output -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+
+          $buildRoots = @(
+            (Join-Path $env:PAINT "build"),
+            (Join-Path $env:PAINT "build/krom"),
+            (Join-Path $env:PAINT "build/out"),
+            (Join-Path $source "build")
+          )
+
+          $files = @()
+
+          foreach ($root in $buildRoots) {
+            if (Test-Path -LiteralPath $root -PathType Container) {
+              $files += Get-ChildItem -LiteralPath $root -Recurse -File `
+                -ErrorAction SilentlyContinue
+            }
+          }
+
+          $files = @($files | Sort-Object FullName -Unique)
+
+          if ($files.Count -eq 0) {
+            Write-Host "No generated files were found in the expected build directories."
+
+            Get-ChildItem -LiteralPath $source -Recurse -File |
+              Where-Object {
+                $_.FullName -match '[\\/]build[\\/]' -or
+                $_.Extension -in @(".exe", ".dll", ".pak", ".data", ".bin")
+              } |
+              Select-Object -First 200 -ExpandProperty FullName
+
+            throw "Compilation produced no discoverable output files."
+          }
+
+          $exe = @(
+            $files | Where-Object {
+              $_.Name -ieq "ArmorPaint.exe"
+            }
+          )
+
+          if ($exe.Count -eq 0) {
+            Write-Host "Build files were found, but ArmorPaint.exe was not found."
+
+            $files |
+              Select-Object -First 200 FullName, Length |
+              Format-Table -AutoSize
+
+            throw "Cannot package a verified Windows executable."
+          }
+
+          foreach ($file in $files) {
+            $relative = $null
+
+            foreach ($root in $buildRoots) {
+              if ($file.FullName.StartsWith(
+                $root.TrimEnd('\') + '\',
+                [System.StringComparison]::OrdinalIgnoreCase
+              )) {
+                $relative = $file.FullName.Substring(
+                  $root.TrimEnd('\').Length
+                ).TrimStart('\')
+
+                break
+              }
+            }
+
+            if (!$relative) {
+              $relative = $file.Name
+            }
+
+            $destination = Join-Path $output $relative
+            $destinationDir = Split-Path -Parent $destination
+
+            New-Item -ItemType Directory -Path $destinationDir -Force |
+              Out-Null
+
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+          }
+
+          Write-Host ""
+          Write-Host "Files copied to vendor:"
+          Get-ChildItem -LiteralPath $output -Recurse -File |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize
+
+          "VENDOR=$vendor" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "PACKAGE=$output" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Create distributable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $zip = Join-Path $env:VENDOR "ArmorPaint-1.0-Windows-x64.zip"
+
+          if (Test-Path -LiteralPath $zip) {
+            Remove-Item -LiteralPath $zip -Force
+          }
+
+          Compress-Archive `
+            -Path (Join-Path $env:PACKAGE "*") `
+            -DestinationPath $zip `
+            -CompressionLevel Optimal
+
+          if (!(Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "ZIP creation failed."
+          }
+
+          Write-Host "Created: $zip"
+          Write-Host "Size: $((Get-Item -LiteralPath $zip).Length) bytes"
+
+          "ZIP_PATH=$zip" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload build as GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArmorPaint-1.0-Windows-x64
+          path: sources/armorpaint-260/vendor/ArmorPaint-1.0-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit vendor output to repository
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- sources/armorpaint-260/vendor/
+
+          if (git diff --cached --quiet) {
+            Write-Host "No new vendor changes to commit."
+            exit 0
+          }
+
+          git commit -m "Add ArmorPaint 1.0 Windows test build"
+
+          git push origin "HEAD:${env:GITHUB_REF_NAME}"
