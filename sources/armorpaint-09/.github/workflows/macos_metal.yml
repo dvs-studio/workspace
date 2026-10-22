@@ -1,0 +1,23 @@
+name: macOS (Metal)
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  build:
+
+    runs-on: macOS-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Get Submodules
+      run: git submodule update --init --recursive
+    - name: Compile
+      run: |
+        cd armorpaint
+        ../armorcore/Kinc/make --from ../armorcore -g metal
