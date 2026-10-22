@@ -1,0 +1,10 @@
+# Third-party source must stay byte-for-byte identical to upstream on every OS.
+# Without this, a Windows runner converts LF to CRLF on checkout and the
+# committed copy stops matching the upstream tag.
+sources/** -text
+
+# Build products are binary.
+*.zip binary
+*.exe binary
+*.dll binary
+*.part* binary
