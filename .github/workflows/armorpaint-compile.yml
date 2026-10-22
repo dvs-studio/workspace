@@ -1,0 +1,291 @@
+name: ArmorPaint - Compile for Windows x64
+
+# Compiles ArmorPaint 1.0 or 0.9 for Windows x64 using exact commands from README.
+# Output goes to both GitHub Artifacts and a folder in the repository.
+#
+#   ArmorPaint 1.0 (sources/armorpaint-260/):
+#       Command: ..\base\make  (from paint/ directory)
+#       Output: paint/build/ArmorPaint.sln (Visual Studio project)
+#       Built binary: paint/build/ArmorPaint.exe
+#
+#   ArmorPaint 0.9 (sources/armorpaint-09/):
+#       Command 1: Unpack v8_monolith.7z
+#       Command 2: ..\armorcore\Kinc\make --from ..\armorcore -g direct3d11  (from armorpaint/ directory)
+#       Output: armorpaint/build/ArmorPaint.sln (Visual Studio project)
+#       Built binary: armorpaint/build/x64/Release/ArmorPaint.exe
+#       Runtime: Must copy to armorpaint/build/krom
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ArmorPaint version to compile"
+        type: choice
+        required: true
+        default: "1.0"
+        options:
+          - "1.0"
+          - "0.9"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: armorpaint-compile-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    name: Compile ArmorPaint ${{ inputs.version }} - Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Enable long paths
+        run: |
+          $ErrorActionPreference = "Stop"
+          git config --global core.longpaths true
+          try {
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -Type DWord
+            Write-Host "Windows long paths enabled."
+          }
+          catch {
+            Write-Host "Could not enable Windows long paths (continuing): $($_.Exception.Message)"
+          }
+
+      # ==================================================================
+      # ARMOPAINT 1.0 - Compile with ..\base\make
+      # ==================================================================
+      - name: Compile ArmorPaint 1.0 - Windows x64
+        if: inputs.version == '1.0'
+        working-directory: sources/armorpaint-260/paint
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "========================================================================"
+          Write-Host "Compiling ArmorPaint 1.0 (tag 26.09)"
+          Write-Host "========================================================================"
+
+          # Run the exact command from README: ..\base\make
+          Write-Host "Running: ..\base\make"
+          & cmd.exe /c "..\base\make"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+          Write-Host "Build completed successfully."
+
+      # ==================================================================
+      # ARMORPAINT 0.9 - Unpack v8_monolith, compile with Kinc/make
+      # ==================================================================
+      - name: Unpack v8_monolith for ArmorPaint 0.9
+        if: inputs.version == '0.9'
+        working-directory: sources/armorpaint-09/armorcore/v8/libraries/win32/release
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "========================================================================"
+          Write-Host "Unpacking v8_monolith.7z for ArmorPaint 0.9"
+          Write-Host "========================================================================"
+
+          if (!(Test-Path "v8_monolith.7z")) {
+            Write-Host "::error::v8_monolith.7z not found at $(Get-Location)"
+            exit 1
+          }
+
+          # Use 7z to extract (preinstalled on windows-latest)
+          Write-Host "Extracting v8_monolith.7z..."
+          & 7z x v8_monolith.7z
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::7z extraction failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+          Write-Host "Extraction completed."
+
+      - name: Compile ArmorPaint 0.9 - Windows x64
+        if: inputs.version == '0.9'
+        working-directory: sources/armorpaint-09/armorpaint
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "========================================================================"
+          Write-Host "Compiling ArmorPaint 0.9 (tag 23.09)"
+          Write-Host "========================================================================"
+
+          # Run the exact command from README: ..\armorcore\Kinc\make --from ..\armorcore -g direct3d11
+          Write-Host "Running: ..\armorcore\Kinc\make --from ..\armorcore -g direct3d11"
+          & cmd.exe /c "..\armorcore\Kinc\make --from ..\armorcore -g direct3d11"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+          Write-Host "Build completed successfully."
+
+      # ==================================================================
+      # Verify and stage output
+      # ==================================================================
+      - name: Verify and stage compiled output
+        id: verify
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = "${{ inputs.version }}"
+
+          Write-Host "========================================================================"
+          Write-Host "Verifying build output for ArmorPaint $version"
+          Write-Host "========================================================================"
+
+          if ($version -eq "1.0") {
+            $buildDir = "sources/armorpaint-260/paint/build"
+            $exePath = "$buildDir/ArmorPaint.exe"
+            $slnPath = "$buildDir/ArmorPaint.sln"
+            $outputFolder = "build-output/ArmorPaint-1.0-Windows-x64"
+          }
+          else {
+            $buildDir = "sources/armorpaint-09/armorpaint/build"
+            $exePath = "$buildDir/x64/Release/ArmorPaint.exe"
+            $slnPath = "$buildDir/ArmorPaint.sln"
+            $outputFolder = "build-output/ArmorPaint-0.9-Windows-x64"
+          }
+
+          # Verify .sln exists
+          if (!(Test-Path $slnPath)) {
+            Write-Host "::error::Visual Studio project not found: $slnPath"
+            exit 1
+          }
+          Write-Host "[ok] Found: $slnPath"
+
+          # Verify executable exists
+          if (!(Test-Path $exePath)) {
+            Write-Host "::error::Built executable not found: $exePath"
+            exit 1
+          }
+          Write-Host "[ok] Found: $exePath"
+
+          # Get file size
+          $fileSize = (Get-Item $exePath).Length
+          $fileSizeMB = [math]::Round($fileSize / 1MB, 2)
+          Write-Host "[ok] ArmorPaint.exe size: $fileSizeMB MB"
+
+          # Create output folder
+          New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
+
+          # For 1.0: copy paint/build/ArmorPaint.exe and paint/build/out/*
+          if ($version -eq "1.0") {
+            Write-Host "Staging output for 1.0..."
+            Copy-Item $exePath -Destination "$outputFolder/ArmorPaint.exe"
+            if (Test-Path "sources/armorpaint-260/paint/build/out") {
+              Copy-Item "sources/armorpaint-260/paint/build/out" -Destination "$outputFolder/data" -Recurse
+            }
+          }
+          else {
+            # For 0.9: copy exe to krom first, then copy krom
+            Write-Host "Staging output for 0.9..."
+            Copy-Item $exePath -Destination "sources/armorpaint-09/armorpaint/build/krom/ArmorPaint.exe"
+            if (Test-Path "sources/armorpaint-09/armorpaint/build/krom") {
+              Copy-Item "sources/armorpaint-09/armorpaint/build/krom" -Destination "$outputFolder/runtime" -Recurse
+            }
+          }
+
+          Write-Host "Output staged to: $outputFolder"
+          echo "output_folder=$outputFolder" >> $env:GITHUB_OUTPUT
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      # ==================================================================
+      # Upload to GitHub Artifacts
+      # ==================================================================
+      - name: Upload to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArmorPaint-${{ steps.verify.outputs.version }}-Windows-x64
+          path: ${{ steps.verify.outputs.output_folder }}
+          if-no-files-found: error
+
+      # ==================================================================
+      # Commit output back to repository
+      # ==================================================================
+      - name: Commit build output to repository
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = "${{ inputs.version }}"
+          $outputFolder = "${{ steps.verify.outputs.output_folder }}"
+
+          Write-Host "========================================================================"
+          Write-Host "Committing build output to repository"
+          Write-Host "========================================================================"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Add all build output
+          git add -A -- "$outputFolder"
+
+          if (git diff --cached --quiet) {
+            Write-Host "No changes to commit."
+          }
+          else {
+            git commit -q -m "Build ArmorPaint $version - Windows x64
+
+Output: $outputFolder
+Workflow run: ${{ github.run_id }}"
+
+            # Push with retry
+            $pushed = $false
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              Write-Host "Push attempt $attempt..."
+              if (git push origin HEAD:${{ github.ref_name }}) {
+                $pushed = $true
+                break
+              }
+              Write-Host "Push failed. Rebasing and retrying..."
+              git fetch origin ${{ github.ref_name }}
+              git rebase origin/${{ github.ref_name }}
+              Start-Sleep -Seconds ($attempt * 5)
+            }
+
+            if (!$pushed) {
+              Write-Host "::error::Could not push after 5 attempts"
+              exit 1
+            }
+
+            Write-Host "Push successful."
+          }
+
+      - name: Job Summary
+        if: always()
+        run: |
+          $version = "${{ inputs.version }}"
+          $status = "${{ job.status }}"
+          $outputFolder = "${{ steps.verify.outputs.output_folder }}"
+
+          @"
+          ## ArmorPaint $version - Windows x64 Build
+
+          | Property | Value |
+          |---|---|
+          | Version | $version |
+          | Platform | Windows x64 |
+          | Status | $status |
+          | Output Folder | \`$outputFolder\` |
+          | GitHub Artifact | ArmorPaint-$version-Windows-x64 |
+          | Repository | ${{ github.repository }} |
+          | Branch | ${{ github.ref_name }} |
+          | Run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+          " | Out-File -Append -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
