@@ -81,7 +81,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $cfg = Get-BuildConfig -Version $env:VERSION
           $root = Join-Path $env:GITHUB_WORKSPACE $cfg.SourceRel
@@ -126,7 +126,7 @@ jobs:
         id: tools
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           Write-Section "Build tools"
           $vs = Get-VisualStudio
@@ -161,7 +161,7 @@ jobs:
           SOURCE_REL: ${{ steps.layout.outputs.source_rel }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $root = Join-Path $env:GITHUB_WORKSPACE $env:SOURCE_REL
           $stage = Join-Path $env:RUNNER_TEMP "ap-build"
@@ -212,7 +212,7 @@ jobs:
           DIAG: ${{ steps.stage.outputs.diag }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $lockPath = Join-Path $env:TREE "ARMORPAINT_DEPENDENCIES.json"
           $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
@@ -274,7 +274,7 @@ jobs:
           DIAG: ${{ steps.stage.outputs.diag }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $paint = Join-Path $env:TREE "paint"
           $log = Join-Path $env:DIAG "generate-and-compile-1.0.log"
@@ -302,7 +302,7 @@ jobs:
           MSBUILD: ${{ steps.tools.outputs.msbuild }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $app = Join-Path $env:TREE "armorpaint"
           $genLog = Join-Path $env:DIAG "generate-0.9.log"
@@ -343,7 +343,7 @@ jobs:
           VS_PATH: ${{ steps.tools.outputs.vs_path }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $buildRoot = if ($env:VERSION -eq "1.0") { Join-Path $env:TREE "paint/build" } else { Join-Path $env:TREE "armorpaint/build" }
           $runtimeRel = if ($env:VERSION -eq "1.0") { "paint/build/out" } else { "armorpaint/build/krom" }
@@ -442,7 +442,7 @@ jobs:
           TAG: ${{ steps.layout.outputs.tag }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $pkg = Join-Path $env:STAGE "package/$env:OUTPUT_NAME"
           if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Recurse -Force }
@@ -521,7 +521,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
-          . "$env:GITHUB_WORKSPACE/.github/scripts/armorpaint-build-common.ps1"
+          . (Join-Path $env:GITHUB_WORKSPACE ".github" "scripts" "armorpaint-build-common.ps1")
 
           $src = Join-Path $env:GITHUB_WORKSPACE $env:SOURCE_REL
           $outDir = Join-Path $src "build-output"
