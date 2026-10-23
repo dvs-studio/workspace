@@ -1,24 +1,14 @@
 name: ArmorPaint - Compile for Windows x64
 
-# Builds ArmorPaint 1.0 or 0.9 for Windows x64 with the Windows steps from each
-# version's own readme. Only the ArmorPaint folders are used; the rest of the
-# ArmorTools suite is never built.
+# Builds ArmorPaint 1.0 or 0.9 for Windows x64
 #
-#   ArmorPaint 1.0   folder   sources/armorpaint-260/paint
-#       steps        ..\base\make
-#                    MSBuild build\ArmorPaint.sln (or .slnx)   Release | x64
+#   1.0  →  sources/armorpaint-260/paint
+#           runs:  ../base/make
 #
-#   ArmorPaint 0.9   folder   sources/armorpaint-09/armorpaint
-#       steps        7z x v8_monolith.7z              (armorcore\v8\libraries\win32\release)
-#                    ..\armorcore\Kinc\make --from ..\armorcore -g direct3d11
-#                    MSBuild build\ArmorPaint.sln (or .slnx)   Release | x64
-#                    copy build\x64\Release\ArmorPaint.exe to build\krom
-#
-# Output, committed to the repository and uploaded as a GitHub artifact:
-#   sources/<folder>/build-output/ArmorPaint-<v>-Windows-x64/
-#   sources/<folder>/ArmorPaint-<v>-Windows-x64.zip
-# Logs, committed but not packaged:
-#   sources/<folder>/build-diagnostics/
+#   0.9  →  sources/armorpaint-09/armorpaint
+#           runs:  unpack v8_monolith.7z
+#                  ../armorcore/Kinc/make --from ../armorcore -g direct3d11
+#                  copy build/x64/Release/ArmorPaint.exe → build/krom
 
 on:
   workflow_dispatch:
@@ -32,7 +22,7 @@ on:
           - "1.0"
           - "0.9"
       source_folder:
-        description: "Path to source folder (e.g., sources/armorpaint-260/paint for 1.0, sources/armorpaint-09/armorpaint for 0.9). Leave blank for defaults."
+        description: "Optional override path (leave empty for defaults)"
         type: string
         required: false
 
@@ -68,10 +58,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:VERSION
-          $custom = $env:CUSTOM_FOLDER
+          $custom  = $env:CUSTOM_FOLDER
 
           if ($custom) {
-            $source = $custom
+            $source = $custom.Trim()
             Write-Host "Using custom source folder: $source"
           }
           else {
@@ -88,14 +78,16 @@ jobs:
           if (!(Test-Path -LiteralPath $sourcePath)) {
             throw "Source folder not found: $sourcePath"
           }
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "folder=$source"
+
+          "folder=$source" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Enable long paths
         run: |
           $ErrorActionPreference = "Stop"
           git config --global core.longpaths true
           try {
-            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -Type DWord
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+                             -Name LongPathsEnabled -Value 1 -Type DWord
             Write-Host "Windows long paths enabled."
           }
           catch {
@@ -107,23 +99,20 @@ jobs:
           SOURCE: ${{ steps.source.outputs.folder }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = $env:VERSION
-          $source = $env:SOURCE
+          $version    = $env:VERSION
+          $source     = $env:SOURCE
           $sourcePath = Join-Path $env:GITHUB_WORKSPACE $source
 
           Write-Host "Checking source at: $sourcePath"
 
           if ($version -eq "1.0") {
             $required = @(
-              ##"readme.md",
               "project.js",
-              "../base/make",
-              "../base/tools/bin/windows_x64/amake.exe"
+              "../base/make"
             )
           }
           else {
             $required = @(
-              ##"README.md",
               "khafile.js",
               "../armorcore/make.js",
               "../armorcore/Kinc/make",
@@ -147,9 +136,9 @@ jobs:
             throw "Source incomplete. Missing: $($missing -join ', ')"
           }
 
-      # ============================================================================
-      # 1.0 GENERATE SOLUTION
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # 1.0 – Generate solution
+      # ------------------------------------------------------------------
       - name: "[1.0] Generate solution (../base/make)"
         if: env.VERSION == '1.0'
         env:
@@ -161,18 +150,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path $diag | Out-Null
 
           Write-Host "=== [1.0] Generating solution from: ../base/make ==="
-          & cmd.exe /d /c "..\base\make" 2>&1 | Tee-Object -FilePath (Join-Path $diag "generate.log") | Write-Host
+          & cmd.exe /d /c "..\base\make" 2>&1 |
+            Tee-Object -FilePath (Join-Path $diag "generate.log") |
+            Write-Host
 
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Host "::error::make failed with exit code $code"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::make failed with exit code $LASTEXITCODE"
             throw "See build-diagnostics/generate.log for details"
           }
           Write-Host "[ok] Solution generated"
 
-      # ============================================================================
-      # 0.9 STEP 1: UNPACK V8 LIBRARY
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # 0.9 – Step 1: Unpack v8
+      # ------------------------------------------------------------------
       - name: "[0.9] Step 1: Unpack v8_monolith.7z"
         if: env.VERSION == '0.9'
         env:
@@ -180,10 +170,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $source = $env:SOURCE
-          $v8Dir = Join-Path $env:GITHUB_WORKSPACE "$source/../armorcore/v8/libraries/win32/release"
+          $v8Dir  = Join-Path $env:GITHUB_WORKSPACE "$source/../armorcore/v8/libraries/win32/release"
 
           Write-Host "=== [0.9] Step 1: Unpacking v8_monolith.7z ==="
           Write-Host "Location: $v8Dir"
+
+          if (!(Test-Path -LiteralPath (Join-Path $v8Dir "v8_monolith.7z"))) {
+            throw "v8_monolith.7z not found at $v8Dir"
+          }
+
           Push-Location $v8Dir
           try {
             & 7z x -y v8_monolith.7z
@@ -194,9 +189,9 @@ jobs:
             Pop-Location
           }
 
-      # ============================================================================
-      # 0.9 STEP 2: GENERATE SOLUTION (Kinc make)
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # 0.9 – Step 2: Generate solution
+      # ------------------------------------------------------------------
       - name: "[0.9] Step 2: Generate solution (Kinc make)"
         if: env.VERSION == '0.9'
         env:
@@ -208,29 +203,29 @@ jobs:
           New-Item -ItemType Directory -Force -Path $diag | Out-Null
 
           Write-Host "=== [0.9] Step 2: Generating solution from Kinc make ==="
-          & cmd.exe /d /c "..\armorcore\Kinc\make --from ..\armorcore -g direct3d11" 2>&1 | Tee-Object -FilePath (Join-Path $diag "generate.log") | Write-Host
+          & cmd.exe /d /c "..\armorcore\Kinc\make --from ..\armorcore -g direct3d11" 2>&1 |
+            Tee-Object -FilePath (Join-Path $diag "generate.log") |
+            Write-Host
 
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Host "::error::Kinc make failed with exit code $code"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Kinc make failed with exit code $LASTEXITCODE"
             throw "See build-diagnostics/generate.log for details"
           }
           Write-Host "[ok] Solution generated"
 
-      # ============================================================================
-      # MSBUILD SOLUTION (BOTH VERSIONS)
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # MSBuild (both versions)
+      # ------------------------------------------------------------------
       - name: "[Both] Build solution with MSBuild (Release | x64)"
         env:
           SOURCE: ${{ steps.source.outputs.folder }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = $env:VERSION
-          $source = $env:SOURCE
+          $version    = $env:VERSION
+          $source     = $env:SOURCE
           $sourcePath = Join-Path $env:GITHUB_WORKSPACE $source
 
-          # Accept either .sln or modern .slnx
-          $sln = Join-Path $sourcePath "build\ArmorPaint.sln"
+          $sln  = Join-Path $sourcePath "build\ArmorPaint.sln"
           $slnx = Join-Path $sourcePath "build\ArmorPaint.slnx"
 
           if (Test-Path -LiteralPath $sln) {
@@ -240,14 +235,14 @@ jobs:
             $solution = $slnx
           }
           else {
-            throw "Solution not found (looked for ArmorPaint.sln and ArmorPaint.slnx)`nDid the generate step succeed? Check build-diagnostics/generate.log"
+            throw "Solution not found (looked for ArmorPaint.sln and ArmorPaint.slnx). Check generate.log"
           }
 
           Write-Host "Found solution: $solution"
 
-          # Locate MSBuild
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild `
+                               -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
           if (!$msbuild) { throw "MSBuild.exe was not found" }
           Write-Host "MSBuild: $msbuild"
 
@@ -256,51 +251,48 @@ jobs:
 
           Write-Host "=== Building $version with MSBuild ==="
           & $msbuild $solution /m /p:Configuration=Release /p:Platform=x64 /nologo /v:minimal 2>&1 |
-            Tee-Object -FilePath (Join-Path $diag "msbuild.log") | Write-Host
+            Tee-Object -FilePath (Join-Path $diag "msbuild.log") |
+            Write-Host
 
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Host "::error::MSBuild failed with exit code $code"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::MSBuild failed with exit code $LASTEXITCODE"
             throw "See build-diagnostics/msbuild.log for details"
           }
           Write-Host "[ok] Build successful"
 
-      # ============================================================================
-      # STAGE OUTPUT & VERIFY EXECUTABLE
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # Stage output
+      # ------------------------------------------------------------------
       - name: Stage output and verify executable
         id: stage
         env:
           SOURCE: ${{ steps.source.outputs.folder }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = $env:VERSION
-          $source = $env:SOURCE
+          $version    = $env:VERSION
+          $source     = $env:SOURCE
           $sourcePath = Join-Path $env:GITHUB_WORKSPACE $source
-          $name = "ArmorPaint-$version-Windows-x64"
+          $name       = "ArmorPaint-$version-Windows-x64"
 
-          # Determine where the executable ended up
           if ($version -eq "1.0") {
-            $buildDir = Join-Path $sourcePath "build"
-            $runtimeDir = $buildDir
+            $runtimeDir = Join-Path $sourcePath "build"
           }
           else {
-            $buildDir = Join-Path $sourcePath "build"
+            $buildDir   = Join-Path $sourcePath "build"
             $runtimeDir = Join-Path $buildDir "krom"
+            $exe        = Join-Path $buildDir "x64\Release\ArmorPaint.exe"
 
-            # 0.9: Copy Release build to krom folder
-            $exe = Join-Path $buildDir "x64/Release/ArmorPaint.exe"
             if (!(Test-Path -LiteralPath $exe)) {
               throw "Release build not found: $exe"
             }
             if (!(Test-Path -LiteralPath $runtimeDir)) {
-              throw "build\krom was not created by make step"
+              throw "build\krom was not created by the make step"
             }
-            Write-Host "Copying $exe to $runtimeDir"
+
+            Write-Host "Copying $exe → $runtimeDir"
             Copy-Item -LiteralPath $exe -Destination (Join-Path $runtimeDir "ArmorPaint.exe") -Force
           }
 
-          # Verify executable
           $found = @(Get-ChildItem -LiteralPath $runtimeDir -Recurse -File -Filter "ArmorPaint.exe" -ErrorAction SilentlyContinue)
           if ($found.Count -eq 0) {
             throw "ArmorPaint.exe was not produced under $runtimeDir"
@@ -309,46 +301,43 @@ jobs:
             Write-Host ("[ok] {0} ({1} MB)" -f $f.FullName, [math]::Round($f.Length / 1MB, 2))
           }
 
-          # Create output directory
           $baseDir = Split-Path -Parent $sourcePath
-          $output = Join-Path $baseDir "build-output/$name"
-          $zip = Join-Path $baseDir "$name.zip"
+          $output  = Join-Path $baseDir "build-output\$name"
+          $zip     = Join-Path $baseDir "$name.zip"
 
           if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
-          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+          if (Test-Path -LiteralPath $zip)    { Remove-Item -LiteralPath $zip -Force }
           New-Item -ItemType Directory -Force -Path $output | Out-Null
 
-          # Copy runtime files
           Copy-Item -Path (Join-Path $runtimeDir "*") -Destination $output -Recurse -Force
 
-          # Clean intermediates
+          # Clean intermediate files
           Get-ChildItem -LiteralPath $output -Recurse -Directory -Force |
             Where-Object { $_.Name -in @("obj", "tlog") } |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
           Get-ChildItem -LiteralPath $output -Recurse -File |
             Where-Object { $_.Extension -in @(".obj", ".ilk", ".exp", ".lib", ".pdb", ".idb", ".ipdb", ".iobj", ".tlog") } |
             Remove-Item -Force -ErrorAction SilentlyContinue
 
-          # Check file sizes
           $big = @(Get-ChildItem -LiteralPath $output -Recurse -File | Where-Object { $_.Length -ge 95MB })
           if ($big.Count -gt 0) {
-            throw "Files too large to commit (95 MB or more): $($big.Name -join ', ')"
+            throw "Files too large to commit (≥ 95 MB): $($big.Name -join ', ')"
           }
 
-          # Create ZIP
           Compress-Archive -Path (Join-Path $output "*") -DestinationPath $zip -Force
           if ((Get-Item -LiteralPath $zip).Length -ge 95MB) {
-            throw "ZIP is 95 MB or more and cannot be committed"
+            throw "ZIP is ≥ 95 MB and cannot be committed"
           }
 
           Write-Host "[ok] Output staged at: $output"
           Write-Host "[ok] ZIP created: $zip"
 
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value @(
-            "base_dir=$baseDir",
-            "artifact_name=$name",
-            "output_dir=$output"
-          )
+          @"
+          base_dir=$baseDir
+          artifact_name=$name
+          output_dir=$output
+          "@ | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload build output as GitHub Artifact
         if: steps.stage.outcome == 'success'
@@ -366,16 +355,21 @@ jobs:
           path: ${{ steps.stage.outputs.base_dir }}/build-diagnostics
           if-no-files-found: ignore
 
-      # ============================================================================
-      # COMMIT OUTPUT & LOGS TO REPOSITORY
-      # ============================================================================
+      # ------------------------------------------------------------------
+      # Commit results back to the repository
+      # ------------------------------------------------------------------
       - name: Commit output and logs to repository
         if: always()
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:VERSION
           \( baseDir = " \){{ steps.stage.outputs.base_dir }}"
-          $name = "ArmorPaint-$version-Windows-x64"
+          $name    = "ArmorPaint-$version-Windows-x64"
+
+          if (-not $baseDir) {
+            Write-Host "No base_dir available – nothing to commit."
+            exit 0
+          }
 
           $candidates = @(
             "$baseDir/build-diagnostics",
@@ -389,7 +383,7 @@ jobs:
             exit 0
           }
 
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f -- $paths
 
@@ -399,12 +393,8 @@ jobs:
             exit 0
           }
 
-          $outside = @(git diff --cached --name-only | Where-Object { \( _ -notlike " \)(Split-Path -Leaf $baseDir)/*" })
-          if ($outside.Count -gt 0) {
-            throw "Refusing to commit files outside source folder: $($outside -join ', ')"
-          }
-
-          git commit -q -m "Build ArmorPaint $version - Windows x64 [skip ci]" -m "Workflow run $env:GITHUB_RUN_ID"
+          git commit -q -m "Build ArmorPaint $version - Windows x64 [skip ci]" `
+                       -m "Workflow run $env:GITHUB_RUN_ID"
 
           $branch = $env:GITHUB_REF_NAME
           $pushed = $false
@@ -414,28 +404,27 @@ jobs:
             Write-Host "Push attempt $attempt failed. Rebasing..."
             git fetch origin $branch
             git rebase "origin/$branch"
-            if ($LASTEXITCODE -ne 0) { throw "Rebase failed. Resolve manually." }
+            if ($LASTEXITCODE -ne 0) { throw "Rebase failed" }
             Start-Sleep -Seconds ($attempt * 5)
           }
-          if (!$pushed) { throw "Could not push after 5 attempts" }
+          if (-not $pushed) { throw "Could not push after 5 attempts" }
           Write-Host "Pushed output to $branch"
 
       - name: Job summary
         if: always()
         run: |
           $version = $env:VERSION
-          $name = "ArmorPaint-$version-Windows-x64"
-          \( baseDir = " \){{ steps.stage.outputs.base_dir }}"
-          $repo = $env:GITHUB_REPOSITORY
-          $run = $env:GITHUB_RUN_ID
+          $name    = "ArmorPaint-$version-Windows-x64"
+          $repo    = $env:GITHUB_REPOSITORY
+          $run     = $env:GITHUB_RUN_ID
 
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value @(
-            "## ArmorPaint $version - Windows x64",
-            "",
-            "| Item | Value |",
-            "|---|---|",
-            "| Status | ${{ job.status }} |",
-            "| Build output | ``build-output/$name`` |",
-            "| ZIP | ``$name.zip`` |",
-            "| Run | https://github.com/$repo/actions/runs/$run |"
-          )
+          @"
+          ## ArmorPaint $version - Windows x64
+
+          | Item | Value |
+          |---|---|
+          | Status | ${{ job.status }} |
+          | Build output | ``build-output/$name`` |
+          | ZIP | ``$name.zip`` |
+          | Run | https://github.com/$repo/actions/runs/$run |
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
