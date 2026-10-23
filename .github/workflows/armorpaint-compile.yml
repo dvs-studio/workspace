@@ -150,32 +150,6 @@ jobs:
           }
 
       # ============================================================================
-      # 0.9 ONLY: UNPACK V8 LIBRARY
-      # ============================================================================
-      # Edit this section to customize 0.9 v8 unpacking if needed
-      # Starts: Line ~127 | Ends: Line ~145
-      # ============================================================================
-      - name: "[0.9] Unpack v8_monolith"
-        if: env.VERSION == '0.9'
-        env:
-          SOURCE: ${{ steps.source.outputs.folder }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $source = $env:SOURCE
-          $v8Dir = Join-Path $env:GITHUB_WORKSPACE "$source/../armorcore/v8/libraries/win32/release"
-
-          Write-Host "Unpacking v8 at: $v8Dir"
-          Push-Location $v8Dir
-          try {
-            & 7z x -y v8_monolith.7z
-            if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
-            Write-Host "[ok] v8_monolith unpacked"
-          }
-          finally {
-            Pop-Location
-          }
-
-      # ============================================================================
       # 1.0 GENERATE SOLUTION
       # ============================================================================
       # EDIT THIS SECTION to customize 1.0 make command
@@ -204,14 +178,43 @@ jobs:
           Write-Host "[ok] Solution generated"
 
       # ============================================================================
-      # 0.9 GENERATE SOLUTION
+      # 0.9 STEP 1: UNPACK V8 LIBRARY
       # ============================================================================
-      # EDIT THIS SECTION to customize 0.9 make command
+      # EDIT THIS SECTION to customize 0.9 v8 unpacking
       # Starts: Line ~185 | Ends: Line ~210
-      # Current command: ..\armorcore\Kinc\make.bat --from ..\armorcore -g direct3d11
-      # Modify the & cmd.exe line to change build parameters
+      # Current command: & 7z x -y v8_monolith.7z
+      # Modify to change extraction options or location
       # ============================================================================
-      - name: "[0.9] Generate solution (Kinc make)"
+      - name: "[0.9] Step 1: Unpack v8_monolith.7z"
+        if: env.VERSION == '0.9'
+        env:
+          SOURCE: ${{ steps.source.outputs.folder }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $source = $env:SOURCE
+          $v8Dir = Join-Path $env:GITHUB_WORKSPACE "$source/../armorcore/v8/libraries/win32/release"
+
+          Write-Host "=== [0.9] Step 1: Unpacking v8_monolith.7z ==="
+          Write-Host "Location: $v8Dir"
+          Push-Location $v8Dir
+          try {
+            & 7z x -y v8_monolith.7z
+            if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
+            Write-Host "[ok] v8_monolith unpacked"
+          }
+          finally {
+            Pop-Location
+          }
+
+      # ============================================================================
+      # 0.9 STEP 2: GENERATE SOLUTION (Kinc make)
+      # ============================================================================
+      # EDIT THIS SECTION to customize 0.9 Kinc make command
+      # Starts: Line ~215 | Ends: Line ~240
+      # Current command: ..\armorcore\Kinc\make.bat --from ..\armorcore -g direct3d11
+      # Modify the & cmd.exe line to change graphics backend or other parameters
+      # ============================================================================
+      - name: "[0.9] Step 2: Generate solution (Kinc make)"
         if: env.VERSION == '0.9'
         env:
           SOURCE: ${{ steps.source.outputs.folder }}
@@ -221,7 +224,7 @@ jobs:
           $diag = Join-Path (Split-Path -Parent (Split-Path -Parent $PWD)) "build-diagnostics"
           New-Item -ItemType Directory -Force -Path $diag | Out-Null
 
-          Write-Host "=== [0.9] Generating solution from: ..\armorcore\Kinc\make.bat ==="
+          Write-Host "=== [0.9] Step 2: Generating solution from Kinc make ==="
           & cmd.exe /d /c "..\armorcore\Kinc\make.bat --from ..\armorcore -g direct3d11" 2>&1 | Tee-Object -FilePath (Join-Path $diag "generate.log") | Write-Host
 
           $code = $LASTEXITCODE
