@@ -13,6 +13,11 @@ name: ArmorPaint - Compile for WebAssembly (1.0)
 
 on:
   workflow_dispatch:
+    inputs:
+      source_folder:
+        description: "Path to source folder (default: sources/armorpaint-260/paint). Leave blank for default."
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -31,38 +36,75 @@ jobs:
       run:
         shell: bash
 
+    env:
+      CUSTOM_FOLDER: ${{ inputs.source_folder }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Check source folder
+      - name: Determine source folder
+        id: source
         run: |
           set -euo pipefail
-          root=sources/armorpaint-260
+          custom="${CUSTOM_FOLDER:-}"
+
+          if [[ -n "$custom" ]]; then
+            source="$custom"
+            echo "Using custom source folder: $source"
+          else
+            source="sources/armorpaint-260/paint"
+            echo "Using default source folder: $source"
+          fi
+
+          if [[ ! -d "$source" ]]; then
+            echo "::error::Source folder not found: $source"
+            exit 1
+          fi
+
+          echo "folder=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Check source folder structure
+        env:
+          SOURCE: ${{ steps.source.outputs.folder }}
+        run: |
+          set -euo pipefail
+          source="$SOURCE"
+          base_dir=$(dirname "$source")
+
+          echo "Checking source at: $source"
+
           missing=0
-          for rel in readme.md paint/project.js base/make base/tools/make.js; do
-            if [[ -e "$root/$rel" ]]; then
+          for rel in readme.md project.js ../base/make ../base/tools/make.js; do
+            full="$source/$rel"
+            if [[ -e "$full" ]]; then
               echo "[ok]      $rel"
             else
               echo "[MISSING] $rel"
               missing=1
             fi
           done
+
           if (( missing )); then
-            echo "::error::ArmorPaint 1.0 source is incomplete. Run 'ArmorPaint - Clone and Prepare Source' for version 1.0 first."
+            echo "::error::ArmorPaint 1.0 source is incomplete"
             exit 1
           fi
 
       - name: Prepare build scripts
+        env:
+          SOURCE: ${{ steps.source.outputs.folder }}
         run: |
           set -euo pipefail
+          source="$SOURCE"
+          base_dir=$(dirname "$source")
+
           # The stored shell scripts may use CRLF line endings, which bash on
           # Linux cannot run, and may lack the execute bit. Only this runner's
           # copy changes; only the build output is committed.
-          sed -i 's/\r$//' sources/armorpaint-260/base/make sources/armorpaint-260/base/tools/platform.sh
-          find sources/armorpaint-260/base -type f \( -name make -o -path '*/bin/*' \) -exec chmod +x {} +
+          sed -i 's/\r$//' "$base_dir/base/make" "$base_dir/base/tools/platform.sh" 2>/dev/null || true
+          find "$base_dir/base" -type f \( -name make -o -path '*/bin/*' \) -exec chmod +x {} +
 
       - name: Install Emscripten
         run: |
@@ -72,21 +114,37 @@ jobs:
           ./emsdk install latest
           ./emsdk activate latest
 
-      - name: Build ArmorPaint 1.0 for WebAssembly (readme command)
-        working-directory: sources/armorpaint-260/paint
+      # ============================================================================
+      # BUILD WASM
+      # ============================================================================
+      # EDIT THIS SECTION to customize the WASM build command
+      # Starts: Line ~140 | Ends: Line ~160
+      # Current command: ../base/make --target wasm --compile --embed
+      # Modify the bash line to change build parameters
+      # ============================================================================
+      - name: Build ArmorPaint 1.0 for WebAssembly
+        env:
+          SOURCE: ${{ steps.source.outputs.folder }}
+        working-directory: ${{ env.SOURCE }}
         run: |
           set -euo pipefail
           mkdir -p ../build-diagnostics
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+
+          echo "=== Building ArmorPaint 1.0 for WASM ==="
           bash ../base/make --target wasm --compile --embed 2>&1 | tee ../build-diagnostics/wasm-build.log
+          echo "[ok] WASM build complete"
 
       - name: Stage output and verify
         id: stage
+        env:
+          SOURCE: ${{ steps.source.outputs.folder }}
         run: |
           set -euo pipefail
-          folder=sources/armorpaint-260
+          source="$SOURCE"
+          base_dir=$(dirname "$source")
           name=ArmorPaint-1.0-WASM
-          build="$folder/paint/build"
+          build="$source/build"
 
           if [[ ! -d "$build" ]]; then
             echo "::error::No build folder was created at $build"
@@ -100,8 +158,8 @@ jobs:
           fi
           echo "[ok] $wasm"
 
-          out="$folder/build-output/$name"
-          rm -rf "$out" "$folder/$name.zip"
+          out="$base_dir/build-output/$name"
+          rm -rf "$out" "$base_dir/$name.zip"
           mkdir -p "$out"
           cp -a "$build/." "$out/"
           find "$out" -type f \( -name '*.obj' -o -name '*.ilk' -o -name '*.pdb' -o -name '*.tlog' \) -delete
@@ -113,11 +171,13 @@ jobs:
           fi
 
           (cd "$out" && zip -qr "../../$name.zip" .)
-          if [[ $(stat -c '%s' "$folder/$name.zip") -ge 95000000 ]]; then
+          if [[ $(stat -c '%s' "$base_dir/$name.zip") -ge 95000000 ]]; then
             echo "::error::The ZIP is 95 MB or more and cannot be committed as one file."
             exit 1
           fi
 
+          echo "[ok] Output staged and verified"
+          echo "base_dir=$base_dir" >> "$GITHUB_OUTPUT"
           echo "output_dir=$out" >> "$GITHUB_OUTPUT"
 
       - name: Upload build output as GitHub Artifact
@@ -125,7 +185,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ArmorPaint-1.0-WASM
-          path: sources/armorpaint-260/build-output/ArmorPaint-1.0-WASM
+          path: ${{ steps.stage.outputs.output_dir }}
           if-no-files-found: error
 
       - name: Upload build logs as GitHub Artifact
@@ -133,19 +193,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ArmorPaint-1.0-WASM-build-logs
-          path: sources/armorpaint-260/build-diagnostics
+          path: ${{ steps.stage.outputs.base_dir }}/build-diagnostics
           if-no-files-found: ignore
 
-      # Runs even after a failed build so the logs are kept.
+      # ============================================================================
+      # COMMIT OUTPUT & LOGS TO REPOSITORY
+      # ============================================================================
+      # Runs even after a failed build so the logs are kept
+      # ============================================================================
       - name: Commit output and logs to repository
         if: always()
+        env:
+          BASE_DIR: ${{ steps.stage.outputs.base_dir }}
         run: |
           set -euo pipefail
-          folder=sources/armorpaint-260
+          base_dir="$BASE_DIR"
           name=ArmorPaint-1.0-WASM
 
           paths=()
-          for p in "$folder/build-diagnostics" "$folder/build-output/$name" "$folder/$name.zip"; do
+          for p in "$base_dir/build-diagnostics" "$base_dir/build-output/$name" "$base_dir/$name.zip"; do
             if [[ -e "$p" ]]; then paths+=("$p"); fi
           done
           if (( ${#paths[@]} == 0 )); then
@@ -162,9 +228,10 @@ jobs:
             exit 0
           fi
 
-          outside=$(git diff --cached --name-only | grep -v "^$folder/" || true)
+          base_name=$(basename "$base_dir")
+          outside=$(git diff --cached --name-only | grep -v "^$base_name/" || true)
           if [[ -n "$outside" ]]; then
-            echo "::error::Refusing to commit files outside $folder:"
+            echo "::error::Refusing to commit files outside source folder:"
             echo "$outside"
             exit 1
           fi
@@ -177,14 +244,14 @@ jobs:
               pushed=true
               break
             fi
-            echo "Push attempt $attempt failed. Rebasing onto origin/$GITHUB_REF_NAME and retrying."
+            echo "Push attempt $attempt failed. Rebasing..."
             git fetch origin "$GITHUB_REF_NAME"
             git rebase "origin/$GITHUB_REF_NAME"
             sleep $((attempt * 5))
           done
 
           if [[ "$pushed" != "true" ]]; then
-            echo "::error::Could not push to $GITHUB_REF_NAME after 5 attempts."
+            echo "::error::Could not push after 5 attempts."
             exit 1
           fi
           echo "Pushed output to $GITHUB_REF_NAME."
@@ -192,16 +259,15 @@ jobs:
       - name: Job summary
         if: always()
         env:
-          JOB_STATUS: ${{ job.status }}
+          BASE_DIR: ${{ steps.stage.outputs.base_dir }}
         run: |
           {
             echo "## ArmorPaint 1.0 - WebAssembly"
             echo ""
             echo "| Item | Value |"
             echo "|---|---|"
-            echo "| Status | $JOB_STATUS |"
-            echo "| Build output | \`sources/armorpaint-260/build-output/ArmorPaint-1.0-WASM\` |"
-            echo "| ZIP | \`sources/armorpaint-260/ArmorPaint-1.0-WASM.zip\` |"
-            echo "| GitHub artifacts | ArmorPaint-1.0-WASM, ArmorPaint-1.0-WASM-build-logs |"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Build output | \`build-output/ArmorPaint-1.0-WASM\` |"
+            echo "| ZIP | \`ArmorPaint-1.0-WASM.zip\` |"
             echo "| Run | https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID |"
           } >> "$GITHUB_STEP_SUMMARY"
