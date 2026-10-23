@@ -1,17 +1,14 @@
-ArmorPaint Source Migration Manifest
-====================================
+ArmorPaint Source Manifest
+==========================
 
-Selected version: 26.09
-Requested Git reference: 26.09
-Source cloning workflow Run ID: 39622537895
-Destination repository: dvs-studio/workspace
-Migration workflow Run ID: 39626367823
-Migration timestamp UTC: 2026-10-21T15:30:55Z
-Source archive: armorpaint-source-26.09.zip
-Installed directory: sources/armorpaint-260
+Version:             ArmorPaint 1.0
+Upstream repository: https://github.com/armory3d/armorpaint
+Upstream tag:        26.09
+Upstream commit:     baf9758e0b59a53b069595057a4ca59df31266de
+Commit date:         2026-09-03T13:00:26+02:00
+Commit subject:      paint: bump version
+Installed in:        sources/armorpaint-260
+Line endings:        unchanged from upstream (LF)
 
-Important:
-This directory contains source files extracted from a GitHub Actions artifact.
-The original .git database is not included in the archive.
-Git submodule contents may be missing if their checkout failed.
-Successful extraction does not guarantee that the source will compile.
+Pinned submodules (full detail in ARMORPAINT_DEPENDENCIES.json):
+  none
