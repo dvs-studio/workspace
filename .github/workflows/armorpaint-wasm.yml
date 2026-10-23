@@ -1,11 +1,15 @@
-name: ArmorPaint - Compile for WebAssembly (WASM)
+name: ArmorPaint - Compile for WebAssembly (1.0)
 
-# Compiles ArmorPaint 1.0 to WebAssembly using exact command from README.
-# Output goes to both GitHub Artifacts and a folder in the repository.
+# Builds ArmorPaint 1.0 for WebAssembly with the command from
+# sources/armorpaint-260/readme.md, run from sources/armorpaint-260/paint:
 #
-#   ArmorPaint 1.0 (sources/armorpaint-260/):
-#       Command: ../base/make --target wasm --compile --embed  (from paint/ directory)
-#       Output: paint/build/ (WASM bundle with .wasm, .js, etc.)
+#     ../base/make --target wasm --compile --embed
+#
+# Output, committed to the repository and uploaded as a GitHub artifact:
+#   sources/armorpaint-260/build-output/ArmorPaint-1.0-WASM/
+#   sources/armorpaint-260/ArmorPaint-1.0-WASM.zip
+# Logs, committed but not packaged:
+#   sources/armorpaint-260/build-diagnostics/
 
 on:
   workflow_dispatch:
@@ -14,12 +18,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: armorpaint-wasm
+  group: armorpaint-compile-wasm
   cancel-in-progress: false
 
 jobs:
-  compile-wasm:
-    name: Compile ArmorPaint 1.0 to WebAssembly
+  wasm:
+    name: ArmorPaint 1.0 - WebAssembly
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -33,160 +37,171 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install dependencies
+      - name: Check source folder
         run: |
           set -euo pipefail
-          echo "Installing Emscripten and WASM build dependencies..."
+          root=sources/armorpaint-260
+          missing=0
+          for rel in readme.md paint/project.js base/make base/tools/make.js; do
+            if [[ -e "$root/$rel" ]]; then
+              echo "[ok]      $rel"
+            else
+              echo "[MISSING] $rel"
+              missing=1
+            fi
+          done
+          if (( missing )); then
+            echo "::error::ArmorPaint 1.0 source is incomplete. Run 'ArmorPaint - Clone and Prepare Source' for version 1.0 first."
+            exit 1
+          fi
 
-          # Update apt
-          sudo apt-get update -qq
+      - name: Prepare build scripts
+        run: |
+          set -euo pipefail
+          # The stored shell scripts may use CRLF line endings, which bash on
+          # Linux cannot run, and may lack the execute bit. Only this runner's
+          # copy changes; only the build output is committed.
+          sed -i 's/\r$//' sources/armorpaint-260/base/make sources/armorpaint-260/base/tools/platform.sh
+          find sources/armorpaint-260/base -type f \( -name make -o -path '*/bin/*' \) -exec chmod +x {} +
 
-          # Install basic build tools
-          sudo apt-get install -y -qq \
-            git curl wget python3 python3-pip \
-            build-essential cmake clang llvm \
-            nodejs npm
-
-          # Install Emscripten (required for WASM)
-          git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
-          cd ~/emsdk
+      - name: Install Emscripten
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
           ./emsdk install latest
           ./emsdk activate latest
 
-          echo "Dependencies installed."
-
-      - name: Compile ArmorPaint 1.0 to WebAssembly
+      - name: Build ArmorPaint 1.0 for WebAssembly (readme command)
         working-directory: sources/armorpaint-260/paint
         run: |
           set -euo pipefail
+          mkdir -p ../build-diagnostics
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          bash ../base/make --target wasm --compile --embed 2>&1 | tee ../build-diagnostics/wasm-build.log
 
-          echo "========================================================================"
-          echo "Compiling ArmorPaint 1.0 to WebAssembly"
-          echo "========================================================================"
-
-          # Source Emscripten environment
-          source ~/emsdk/emsdk_env.sh
-
-          # Run the exact command from README: ../base/make --target wasm --compile --embed
-          echo "Running: ../base/make --target wasm --compile --embed"
-          ../base/make --target wasm --compile --embed
-
-          echo "Build completed successfully."
-
-      - name: Verify WASM output
-        id: verify
+      - name: Stage output and verify
+        id: stage
         run: |
           set -euo pipefail
+          folder=sources/armorpaint-260
+          name=ArmorPaint-1.0-WASM
+          build="$folder/paint/build"
 
-          buildDir="sources/armorpaint-260/paint/build"
-          outputFolder="build-output/ArmorPaint-1.0-WASM"
-
-          echo "========================================================================"
-          echo "Verifying WASM build output"
-          echo "========================================================================"
-
-          # Check for WASM files
-          if [[ ! -d "$buildDir" ]]; then
-            echo "::error::Build directory not found: $buildDir"
+          if [[ ! -d "$build" ]]; then
+            echo "::error::No build folder was created at $build"
             exit 1
           fi
 
-          # Look for .wasm file
-          wasmFile=$(find "$buildDir" -name "*.wasm" -type f 2>/dev/null | head -1 || true)
-          if [[ -z "$wasmFile" ]]; then
-            echo "::error::No .wasm file found in $buildDir"
+          wasm=$(find "$build" -name '*.wasm' -type f | head -1 || true)
+          if [[ -z "$wasm" ]]; then
+            echo "::error::No .wasm file was produced under $build"
             exit 1
           fi
-          echo "[ok] Found WASM: $wasmFile"
+          echo "[ok] $wasm"
 
-          # Look for .js runtime
-          jsFile=$(find "$buildDir" -name "*.js" -type f 2>/dev/null | head -1 || true)
-          if [[ -z "$jsFile" ]]; then
-            echo "::warning::No .js file found (optional)"
-          else
-            echo "[ok] Found JS runtime: $jsFile"
+          out="$folder/build-output/$name"
+          rm -rf "$out" "$folder/$name.zip"
+          mkdir -p "$out"
+          cp -a "$build/." "$out/"
+          find "$out" -type f \( -name '*.obj' -o -name '*.ilk' -o -name '*.pdb' -o -name '*.tlog' \) -delete
+
+          big=$(find "$out" -type f -size +94M || true)
+          if [[ -n "$big" ]]; then
+            echo "::error::Files too large to commit (95 MB or more): $big"
+            exit 1
           fi
 
-          # Create output folder
-          mkdir -p "$outputFolder"
+          (cd "$out" && zip -qr "../../$name.zip" .)
+          if [[ $(stat -c '%s' "$folder/$name.zip") -ge 95000000 ]]; then
+            echo "::error::The ZIP is 95 MB or more and cannot be committed as one file."
+            exit 1
+          fi
 
-          # Copy all build artifacts (WASM, JS, HTML, etc.)
-          echo "Copying WASM build artifacts..."
-          cp -r "$buildDir"/* "$outputFolder/" || true
+          echo "output_dir=$out" >> "$GITHUB_OUTPUT"
 
-          echo "Output staged to: $outputFolder"
-          echo "output_folder=$outputFolder" >> $GITHUB_OUTPUT
-
-      - name: Upload to GitHub Artifacts
+      - name: Upload build output as GitHub Artifact
+        if: steps.stage.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ArmorPaint-1.0-WASM
-          path: ${{ steps.verify.outputs.output_folder }}
+          path: sources/armorpaint-260/build-output/ArmorPaint-1.0-WASM
           if-no-files-found: error
 
-      - name: Commit WASM output to repository
+      - name: Upload build logs as GitHub Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArmorPaint-1.0-WASM-build-logs
+          path: sources/armorpaint-260/build-diagnostics
+          if-no-files-found: ignore
+
+      # Runs even after a failed build so the logs are kept.
+      - name: Commit output and logs to repository
+        if: always()
         run: |
           set -euo pipefail
+          folder=sources/armorpaint-260
+          name=ArmorPaint-1.0-WASM
 
-          outputFolder="${{ steps.verify.outputs.output_folder }}"
-
-          echo "========================================================================"
-          echo "Committing WASM output to repository"
-          echo "========================================================================"
+          paths=()
+          for p in "$folder/build-diagnostics" "$folder/build-output/$name" "$folder/$name.zip"; do
+            if [[ -e "$p" ]]; then paths+=("$p"); fi
+          done
+          if (( ${#paths[@]} == 0 )); then
+            echo "Nothing to commit."
+            exit 0
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Add all WASM output
-          git add -A -- "$outputFolder"
+          git add -f -- "${paths[@]}"
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -q -m "Build ArmorPaint 1.0 - WebAssembly
-
-Output: $outputFolder
-Workflow run: ${{ github.run_id }}"
-
-            # Push with retry
-            pushed=false
-            for attempt in {1..5}; do
-              echo "Push attempt $attempt..."
-              if git push origin HEAD:${{ github.ref_name }}; then
-                pushed=true
-                break
-              fi
-              echo "Push failed. Rebasing and retrying..."
-              git fetch origin ${{ github.ref_name }}
-              git rebase origin/${{ github.ref_name }}
-              sleep $((attempt * 5))
-            done
-
-            if [[ "$pushed" != "true" ]]; then
-              echo "::error::Could not push after 5 attempts"
-              exit 1
-            fi
-
-            echo "Push successful."
+            echo "Output already matches the repository. Nothing to commit."
+            exit 0
           fi
 
-      - name: Job Summary
+          outside=$(git diff --cached --name-only | grep -v "^$folder/" || true)
+          if [[ -n "$outside" ]]; then
+            echo "::error::Refusing to commit files outside $folder:"
+            echo "$outside"
+            exit 1
+          fi
+
+          git commit -q -m "Build ArmorPaint 1.0 - WebAssembly [skip ci]" -m "Workflow run $GITHUB_RUN_ID"
+
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+              pushed=true
+              break
+            fi
+            echo "Push attempt $attempt failed. Rebasing onto origin/$GITHUB_REF_NAME and retrying."
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            sleep $((attempt * 5))
+          done
+
+          if [[ "$pushed" != "true" ]]; then
+            echo "::error::Could not push to $GITHUB_REF_NAME after 5 attempts."
+            exit 1
+          fi
+          echo "Pushed output to $GITHUB_REF_NAME."
+
+      - name: Job summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
         run: |
-          outputFolder="${{ steps.verify.outputs.output_folder }}"
-          status="${{ job.status }}"
-
-          cat >> $GITHUB_STEP_SUMMARY <<'EOF'
-          ## ArmorPaint 1.0 - WebAssembly Build
-
-          | Property | Value |
-          |---|---|
-          | Version | 1.0 |
-          | Target | WebAssembly (WASM) |
-          | Status | ${{ job.status }} |
-          | Output Folder | `${{ steps.verify.outputs.output_folder }}` |
-          | GitHub Artifact | ArmorPaint-1.0-WASM |
-          | Repository | ${{ github.repository }} |
-          | Branch | ${{ github.ref_name }} |
-          | Run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
-          EOF
+          {
+            echo "## ArmorPaint 1.0 - WebAssembly"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Status | $JOB_STATUS |"
+            echo "| Build output | \`sources/armorpaint-260/build-output/ArmorPaint-1.0-WASM\` |"
+            echo "| ZIP | \`sources/armorpaint-260/ArmorPaint-1.0-WASM.zip\` |"
+            echo "| GitHub artifacts | ArmorPaint-1.0-WASM, ArmorPaint-1.0-WASM-build-logs |"
+            echo "| Run | https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID |"
+          } >> "$GITHUB_STEP_SUMMARY"
