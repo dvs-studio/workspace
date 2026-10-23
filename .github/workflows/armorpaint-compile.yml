@@ -150,20 +150,17 @@ jobs:
       # ============================================================================
       # 1.0 GENERATE SOLUTION
       # ============================================================================
-      # EDIT THIS SECTION to customize 1.0 make command
-      # Current command: ..\base\make
-      # ============================================================================
-      - name: "[1.0] Generate solution (..\base\make)"
+      - name: "[1.0] Generate solution (../base/make)"
         if: env.VERSION == '1.0'
         env:
           SOURCE: ${{ steps.source.outputs.folder }}
-        working-directory: ${{ env.GITHUB_WORKSPACE }}\${{ env.SOURCE }}
+        working-directory: \( {{ github.workspace }}/ \){{ env.SOURCE }}
         run: |
           $ErrorActionPreference = "Stop"
           $diag = Join-Path (Split-Path -Parent (Split-Path -Parent $PWD)) "build-diagnostics"
           New-Item -ItemType Directory -Force -Path $diag | Out-Null
 
-          Write-Host "=== [1.0] Generating solution from: ..\base\make ==="
+          Write-Host "=== [1.0] Generating solution from: ../base/make ==="
           & cmd.exe /d /c "..\base\make" 2>&1 | Tee-Object -FilePath (Join-Path $diag "generate.log") | Write-Host
 
           $code = $LASTEXITCODE
@@ -200,14 +197,11 @@ jobs:
       # ============================================================================
       # 0.9 STEP 2: GENERATE SOLUTION (Kinc make)
       # ============================================================================
-      # EDIT THIS SECTION to customize 0.9 Kinc make command
-      # Current command: ..\armorcore\Kinc\make --from ..\armorcore -g direct3d11
-      # ============================================================================
       - name: "[0.9] Step 2: Generate solution (Kinc make)"
         if: env.VERSION == '0.9'
         env:
           SOURCE: ${{ steps.source.outputs.folder }}
-        working-directory: ${{ env.GITHUB_WORKSPACE }}\${{ env.SOURCE }}
+        working-directory: \( {{ github.workspace }}/ \){{ env.SOURCE }}
         run: |
           $ErrorActionPreference = "Stop"
           $diag = Join-Path (Split-Path -Parent (Split-Path -Parent $PWD)) "build-diagnostics"
