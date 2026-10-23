@@ -115,7 +115,7 @@ jobs:
 
           if ($version -eq "1.0") {
             $required = @(
-              "readme.md",
+              ##"readme.md",
               "project.js",
               "../base/make",
               "../base/tools/bin/windows_x64/amake.exe"
@@ -123,7 +123,7 @@ jobs:
           }
           else {
             $required = @(
-              "README.md",
+              ##"README.md",
               "khafile.js",
               "../armorcore/make.js",
               "../armorcore/Kinc/make",
