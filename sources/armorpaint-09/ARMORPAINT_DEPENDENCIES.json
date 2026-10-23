@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "source_tag": "23.09",
+  "source_commit": "b658b626a24eb7fe13330c8526f794555547dc19",
+  "submodules": [
+    {
+      "path": "armorcore",
+      "sha": "0f287bbb32fe57a892d5b3eceb35de5f3d92925b",
+      "urls": [
+        "https://github.com/armory3d/armorcore",
+        "https://github.com/Kode/armorcore"
+      ],
+      "role": "source",
+      "materialized": true,
+      "fetched_from": "https://github.com/armory3d/armorcore"
+    },
+    {
+      "path": "armorcore/Kinc",
+      "sha": "7900d076e0b4ca22035f67db2a643b6f5d483144",
+      "urls": [
+        "https://github.com/armory3d/Kinc",
+        "https://github.com/Kode/Kinc"
+      ],
+      "role": "source",
+      "materialized": true,
+      "fetched_from": "https://github.com/Kode/Kinc"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/freebsd_x64",
+      "sha": "b409b86b44da16514700811e101f31c40a57abed",
+      "urls": [
+        "https://github.com/armory3d/KincTools_freebsd_x64.git",
+        "https://github.com/Kode/KincTools_freebsd_x64"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_freebsd_x64"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/linux_arm",
+      "sha": "0ee26ba6daa66fab03e22f9820ecf7f11d08ab14",
+      "urls": [
+        "https://github.com/armory3d/KincTools_linux_arm.git",
+        "https://github.com/Kode/KincTools_linux_arm"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_linux_arm"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/linux_arm64",
+      "sha": "dffcdc8bdf696194b258ccfacb2bfcba8c102fbe",
+      "urls": [
+        "https://github.com/armory3d/KincTools_linux_arm64.git",
+        "https://github.com/Kode/KincTools_linux_arm64"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_linux_arm64"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/linux_x64",
+      "sha": "73343c23d0a0f210606410c921450b44545effd2",
+      "urls": [
+        "https://github.com/armory3d/KincTools_linux_x64.git",
+        "https://github.com/Kode/KincTools_linux_x64"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_linux_x64"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/macos",
+      "sha": "8b420d0c5e65fb8fc8b30f2a69b56d7435e77234",
+      "urls": [
+        "https://github.com/armory3d/KincTools_macos.git",
+        "https://github.com/Kode/KincTools_macos"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_macos"
+    },
+    {
+      "path": "armorcore/Kinc/Tools/windows_x64",
+      "sha": "186ba92232827e54f306eb0d11587ea71d3ddb60",
+      "urls": [
+        "https://github.com/armory3d/KincTools_windows_x64.git",
+        "https://github.com/Kode/KincTools_windows_x64"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/KincTools_windows_x64"
+    },
+    {
+      "path": "armorcore/Libraries/onnx",
+      "sha": "7191e93345b17dd80aa1eefc3ca2bfd5ee538781",
+      "urls": [
+        "https://github.com/armory3d/onnx_bin",
+        "https://github.com/Kode/onnx_bin"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/armory3d/onnx_bin"
+    },
+    {
+      "path": "armorcore/Tools/haxe",
+      "sha": "7fd7cfdeaab141c8db9a6131a7fb3f642f8a630e",
+      "urls": [
+        "https://github.com/armory3d/haxe_bin",
+        "https://github.com/Kode/haxe_bin"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/Kode/haxe_bin"
+    },
+    {
+      "path": "armorcore/v8",
+      "sha": "fea665c609a081416250c34cc8f492d89dd1502a",
+      "urls": [
+        "https://github.com/armory3d/v8_bin",
+        "https://github.com/Kode/v8_bin"
+      ],
+      "role": "toolchain",
+      "materialized": false,
+      "fetched_from": "https://github.com/armory3d/v8_bin"
+    }
+  ]
+}

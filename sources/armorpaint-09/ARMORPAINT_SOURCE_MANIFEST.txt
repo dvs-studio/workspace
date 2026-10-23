@@ -1,17 +1,24 @@
-ArmorPaint Source Migration Manifest
-====================================
+ArmorPaint Source Manifest
+==========================
 
-Selected version: 0.9-September
-Requested Git reference: 23.09
-Source cloning workflow Run ID: 39624466224
-Destination repository: dvs-studio/workspace
-Migration workflow Run ID: 39626532987
-Migration timestamp UTC: 2026-10-21T15:32:03Z
-Source archive: armorpaint-source-0.9-September.zip
-Installed directory: sources/armorpaint-09
+Version:             ArmorPaint 0.9
+Upstream repository: https://github.com/armory3d/armorpaint
+Upstream tag:        23.09
+Upstream commit:     b658b626a24eb7fe13330c8526f794555547dc19
+Commit date:         2023-09-25T12:36:06+02:00
+Commit subject:      Update submodules
+Installed in:        sources/armorpaint-09
+Line endings:        unchanged from upstream (LF)
 
-Important:
-This directory contains source files extracted from a GitHub Actions artifact.
-The original .git database is not included in the archive.
-Git submodule contents may be missing if their checkout failed.
-Successful extraction does not guarantee that the source will compile.
+Pinned submodules (full detail in ARMORPAINT_DEPENDENCIES.json):
+  armorcore                            0f287bbb32fe  copied into this folder
+  armorcore/Kinc                       7900d076e0b4  copied into this folder
+  armorcore/Kinc/Tools/freebsd_x64     b409b86b44da  fetched at compile time
+  armorcore/Kinc/Tools/linux_arm       0ee26ba6daa6  fetched at compile time
+  armorcore/Kinc/Tools/linux_arm64     dffcdc8bdf69  fetched at compile time
+  armorcore/Kinc/Tools/linux_x64       73343c23d0a0  fetched at compile time
+  armorcore/Kinc/Tools/macos           8b420d0c5e65  fetched at compile time
+  armorcore/Kinc/Tools/windows_x64     186ba9223282  fetched at compile time
+  armorcore/Libraries/onnx             7191e93345b1  fetched at compile time
+  armorcore/Tools/haxe                 7fd7cfdeaab1  fetched at compile time
+  armorcore/v8                         fea665c609a0  fetched at compile time

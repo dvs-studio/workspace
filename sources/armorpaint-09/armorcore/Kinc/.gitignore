@@ -1,0 +1,18 @@
+/build
+/Tests/Empty/build
+.DS_Store
+# clangd cache
+.cache
+# ignore all build directories
+**/build/**
+# Shaders
+*.vert
+*.frag
+*.comp
+# Ignore deployment directories, but not the keepme files (order is important)
+**/Deployment/**
+!**/Deployment/keepme
+compile_commands.json
+.vscode/**
+**/Deployment/**
+!**/Deployment/keepme*
